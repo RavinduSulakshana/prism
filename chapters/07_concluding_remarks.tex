@@ -1,0 +1,169 @@
+% ==================================================================
+% Chapter 7 -- Concluding Remarks  (writer W7)
+% ==================================================================
+\chapter{Concluding Remarks}\label{ch:conc}
+
+\section{Chapter overview}
+
+This chapter triangulates the seven objectives against the evidence and answers the research question. It then describes the problems encountered, reflects on the research, considers how the Pressure-based Real-time Intersection Signal Management (\prism{}) controller could reach the road, and closes with future recommendations.
+
+\section{Accomplishment of research objectives}\label{sec:conc-objectives}
+
+\Cref{tab:conc-objectives} maps each objective defined in \cref{sec:intro-objectives} to the work that addressed it and to its evidence; each is supported by both a design artefact and empirical results.
+
+\begin{table}[htbp]
+\centering
+\caption{Triangulation of the research objectives against the evidence in this thesis}
+\label{tab:conc-objectives}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{2.9cm}>{\raggedright\arraybackslash}p{1.5cm}@{}}
+\toprule
+\textbf{Objective} & \textbf{How it was achieved} & \textbf{Evidence} & \textbf{Status}\\
+\midrule
+O1 -- Identify junction problems and stakeholder needs &
+Site observation, derivation of the 78~s fixed-time plan, discussion with the Piliyandala Traffic Police and the RDA on 17.09.2026 &
+\cref{sec:intro-problem}, \cref{sec:srs-stakeholders}, \cref{sec:srs-operationalisation} & Achieved\\
+O2 -- Critically analyse existing systems, algorithms, sensing and simulation tools &
+Comparative review of fixed-time, actuated, SCOOT, SCATS, max-pressure and learning-based control, sensing options and simulators; gap stated &
+\cref{sec:lit-existing}, \cref{sec:lit-algorithms}, \cref{sec:lit-design}, \cref{sec:lit-reflection} & Achieved\\
+O3 -- Design and develop the drone trajectory extractor (\dtx{}) &
+Stabilisation, YOLOv8s with SAHI, ByteTrack, georeferencing, waiting-time and flow extraction; mAP@0.5 of \est{0.86}, MOTA \est{0.82} &
+\cref{sec:impl-dtx}, \cref{sec:eval-dtx} & Achieved\\
+O4 -- Develop, verify and calibrate the \sumo{} model &
+Balanced-demand verification, calibration with drone data (GEH~$<5$ for \est{100\%} of approaches and \est{91.7\%} of movements), and a generator producing ten demand scenarios representing the junction's operating conditions &
+\cref{sec:impl-sumo}, \cref{sec:eval-mock}, \cref{sec:eval-calibration} & Achieved\\
+O5 -- Design and implement the Virtual LiDAR Sensor (\vls{}) &
+Range-dependent noise and dropout, ray-cast occlusion, size-class confusion, clutter and an $\alpha$--$\beta$ tracker &
+\cref{sec:impl-vls}, \cref{sec:eval-sensitivity} & Achieved (simulated)\\
+O6 -- Design and implement \prism{} using mathematics only, and revise it after evaluation &
+PCU-weighted pressure, urgency term, gap-out, hysteresis, starvation cap, spillback guard and fail-safe; five modelling errors diagnosed after the first evaluation and corrected in \prism{}-R (hidden queue, frozen green target, range-edge blend, occlusion persistence, resting rules, cyclic selection); safety tests passed &
+\cref{sec:impl-prism}, \cref{alg:prism}, \cref{sec:eval-functional} & Achieved\\
+O7 -- Evaluate \prism{} against B1--B3, PRISM-GT and the original law &
+Ten demand scenarios $\times$ ten held-out seeds, exact Wilcoxon tests, the wasted-green indicator, the cost of a decision, and sensor and parameter sensitivity &
+\cref{sec:impl-baselines}, \cref{sec:eval-results}, \cref{sec:eval-sensitivity} & Achieved\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The research question asked how a Light Detection and Ranging (LiDAR)-driven, Passenger Car Unit (PCU)-weighted, pressure-based adaptive controller, calibrated with drone-observed heterogeneous traffic, could reduce the average waiting time of road users at the Maviththara junction compared with the existing fixed-time plan. It does so by giving green to the phase with the greatest PCU-weighted pressure rather than following a rigid cycle, while an urgency term, a starvation cap and a cyclic phase order keep every approach served. In the calibrated Simulation of Urban MObility (\sumo{}) model, \prism{}-R reduced the average waiting time per vehicle against the existing plan in all \est{10} demand scenarios and on every one of the \est{10} held-out seeds of each, so every comparison attains the smallest attainable exact Wilcoxon $p$-value of \est{0.002}. The mean reduction is \est{40\%}, ranging from \est{$-14\%$} in the heavy-vehicle scenario, where capacity rather than allocation binds, to \est{$-85\%$} with an empty side road, where the fixed plan's failure is purely one of allocation. Of particular relevance to the Traffic Police, at 700~veh/h the share of 78-second windows in which some approach queue exceeded 200~m, the condition under which officers typically take manual control, fell from \est{24\%} to \est{5\%}; and the green shown to empty approaches while another approach held a stopped vehicle fell from \est{648} to \est{328~s} per hour. A decision costs about \est{0.25~ms}, three orders of magnitude inside the control interval.
+
+Two qualifications belong with that answer. First, the smaller gains at high demand confirm that adaptive control redistributes existing capacity but cannot create it; near saturation its benefit is real but bounded. Second, and more instructive, the control law as first specified did \emph{not} achieve this. It lost to the fixed plan at 500 and 700~veh/h, by more than a factor of two at the latter, and the revision that produced \prism{}-R corrected five errors of which four lay in the controller's estimate of the junction's state rather than in the control law itself. The pressure formulation survived unchanged. The finding the author regards as most transferable is therefore not the percentage but the diagnosis behind it: a controller that declines to use the simulator's ground truth must be verified against that ground truth anyway, or it will optimise confidently against a state that is wrong.
+
+\section{Problems encountered}\label{sec:conc-problems}
+
+The main problems and their resolutions are summarised below.
+
+{\emergencystretch=2em
+\begin{description}[leftmargin=0pt,style=unboxed]
+\item[Tiny motorcycles in aerial video.] At the flight altitude of \est{about 90~m}, a motorcycle occupied only around \est{20} pixels, and a detector run on the downscaled full frame missed many of them. This was resolved with Slicing Aided Hyper Inference (SAHI)~\cite{akyon2022sahi}, which ran the detector on overlapping $2\times2$ tiles so that small objects were seen at close to native resolution.
+\item[Drone hover drift.] Even in calm air, the DJI Mini 2 drifted and rotated slightly, so fixed pixel zones no longer matched the road. Every frame was therefore registered to a reference frame using Oriented FAST and Rotated BRIEF (ORB) features and a Random Sample Consensus (RANSAC) homography~\cite{rublee2011orb,fischler1981ransac}, which removed the drift before detection.
+\item[Three-wheelers absent from standard datasets.] The Common Objects in Context (COCO) classes~\cite{lin2014coco} contain no three-wheeler, the most characteristic vehicle on Sri Lankan roads. The detector was therefore initialised from VisDrone weights, whose tricycle and awning-tricycle classes~\cite{zhu2022visdrone} resemble a three-wheeler from above, and fine-tuned on \est{450} locally annotated frames.
+\item[Occlusion by buses.] Tall buses and lorries hid nearby vehicles in both the drone view and the simulated LiDAR. The tracker's 30-frame buffer bridged short gaps in the video, and the \vls{} modelled occlusion explicitly so that the controller faced the same problem.
+\item[Lost evening session.] The 17:00--18:00 window was approved but could not be flown because of bad weather. The morning and afternoon sessions still spanned high and moderate congestion; the missing evening peak was recorded as a limitation.
+\item[Lane-less filtering in \sumo{}.] Motorcycles and three-wheelers filtering between cars to the stop line cannot be represented by a strictly lane-based model. The sublane model~\cite{sumo_sublane} with a lateral resolution of 0.8~m and a small lateral gap for two-wheelers reproduced this behaviour adequately for calibration.
+\item[Phase oscillation.] With no switching margin ($\theta=0$), \prism{} switched back and forth between phases of similar pressure, wasting time in intergreens. A hysteresis margin was introduced to stop it. The revision later showed that hysteresis had been carrying a burden that belonged elsewhere: once the required green was frozen at the start of each green and $\rho$ raised to 1.0, a green could not be cut short before its target in any case, and the sensitivity analysis found $\theta=0$ costs only \est{0.4~s}. The margin was reduced to 0.10, and responsibility for stability moved from a tuning constant to a structural rule.
+\item[A controller that lost to the plan it replaced.] The most serious problem was that the control law, as specified and implemented, performed worse than the existing fixed-time plan at 500 and 700~veh/h. The temptation was to treat this as a tuning failure and sweep the parameters. Instrumenting the decision log instead revealed five distinct causes (\cref{sec:impl-prism}), four of which were errors in the controller's estimate of the junction's state: vehicles nearest the stop line matched no approach because of an intermediate node in the OpenStreetMap geometry; the required green was recomputed from the queue it was discharging, so greens ended after about \est{11~s}; queues longer than the sensor range reported a constant value; and vehicles hidden behind buses left the queue estimate entirely. Each was corrected as a parameter rather than a rewrite, so the original law could still be run as an ablation and the effect of the revisions measured rather than asserted.
+\item[Permission lead time.] Flying a drone over a public junction required coordination between NSBM, the Piliyandala Police, the Ministry of Defence (MoD) and the Civil Aviation Authority of Sri Lanka (CAASL). The process took from 12.06.2026 to 01.10.2026, so the mock-data phase was deliberately used to develop and test the whole system while approvals were pending.
+\end{description}}
+
+\section{Self-reflection}
+
+\subsection{Ideology about the research}
+
+The author began with a simple conviction: waiting at a red light while the crossing road is empty takes people's time for no reason. This view became more nuanced; near capacity, waiting cannot be eliminated, only shared more fairly and intelligently. The author also came to believe that a controller on public roads must be understandable by the engineers and police officers accountable for it, which is why the control law was kept purely mathematical even though learning-based controllers were attractive for research.
+
+\subsection{Benefits gained}
+
+The project gave the author practical experience in computer vision, tracking, traffic engineering, simulation, control design and statistics. Equally valuable were the non-technical lessons: writing formal requests to public institutions, explaining technical ideas to police officers and engineers, and working with a licensed drone operator within aviation rules. The discussion with the Traffic Police and the Road Development Authority (RDA) changed the author's view of the problem, because it showed that the officers' own time is one of the costs of poor signal control.
+
+\subsection{Learning curves}
+
+The steepest learning curve was \sumo{} itself, particularly the network editing, the sublane model and calibration against observed counts, which required many iterations before the Geoffrey E.\ Havers (GEH) statistic was acceptable. Fine-tuning a detector on a small, hand-annotated dataset taught the author how much data quality matters compared with model choice. Finally, the author learned to treat negative results, such as the oscillation at $\theta=0$, as useful findings rather than failures, and to plan a project so that slow external processes do not block progress.
+
+\section{Business insight}
+
+\subsection{Real-world application}
+
+\paragraph{Deployment path.} The realistic route is a staged pilot led by the RDA, which owns the signals, with the Piliyandala Traffic Police as operational partner. A LiDAR on an existing pole would first feed \prism{} in shadow mode, computing decisions without actuating the lights; closed-loop operation would follow once safety was verified on site, with the fixed-time plan as fail-safe.
+
+\paragraph{Indicative cost comparison.} \Cref{tab:conc-cost} gives an order-of-magnitude comparison in Sri Lankan Rupees (LKR) between equipment cost and the value of time saved; all figures are indicative estimates, not quotations. It shows that the reduction in officer-hours alone, roughly \est{1,400} hours a year, would not by itself justify the capital cost; the economic case rests mainly on the time saved by road users, which gives a simple payback of \est{under a year}. Officers released from manual control would in practice be redeployed to enforcement and road safety rather than producing a cash saving.
+
+\begin{table}[htbp]
+\centering
+\caption{Indicative annual cost--benefit estimate for one junction (LKR)}
+\label{tab:conc-cost}
+\small
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{4.2cm}>{\raggedright\arraybackslash}X>{\raggedleft\arraybackslash}p{2.4cm}@{}}
+\toprule
+\textbf{Item} & \textbf{Assumption} & \textbf{Estimate}\\
+\midrule
+32-channel LiDAR~\cite{ouster_os1} & One unit, imported, including duties & \est{4.5 million}\\
+Edge computer and enclosure & Industrial embedded GPU module in the signal cabinet & \est{0.6 million}\\
+Installation and integration & Pole mounting, power, network, controller interface & \est{1.4 million}\\
+\textbf{Capital cost} & & \textbf{\est{6.5 million}}\\
+Annual maintenance & \est{10\%} of capital per year & \est{0.65 million}\\
+\midrule
+Officer-hours on manual control & 2 officers $\times$ 3~h/day $\times$ 300 days = \est{1,800}~h at \est{LKR 1,200}/h & \est{2.16 million}\\
+Officer-hours saved & Proportional to the fall in the manual-control trigger at peak demand (\est{24\%} to \est{5\%}) & \est{1.7 million}\\
+Road-user time saved & Waiting saving of \est{27.9~s} per vehicle in 2 peak-type hours and \est{6.3~s} in 4 off-peak-type hours; \est{2,800} and \est{2,000}~veh/h; 1.5 persons/vehicle; 300 days; \est{LKR 250} per person-hour & \est{6.5 million}\\
+\textbf{Net annual benefit} & Savings minus maintenance & \textbf{\est{7.6 million}}\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Smart-city integration and maintenance.} Because \prism{} consumes only a sensor-agnostic object list, the same controller could later receive data from cameras or radar, and its decision log could feed a city traffic-management centre. Maintenance would mainly involve cleaning the sensor, recalibrating approach polygons after road works and software updates.
+
+\paragraph{Regulatory considerations.} A live deployment would need RDA approval for any change to signal operation, a formal procedure by which police can override the controller, and a data-protection policy. LiDAR helps here, because point clouds do not capture faces or number plates, which simplifies compliance compared with camera-based systems.
+
+\section{Future recommendations}\label{sec:conc-future}
+
+The long-term vision is a city in which every signalised junction has a LiDAR and a \prism{} controller, and junctions, a cloud service and commuters' phones cooperate so that a commuter reaches the destination in minimum time (\cref{fig:conc-future}). The steps towards it are listed below.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  node distance=1.0cm and 1.1cm,
+  jn/.style={draw, rounded corners, fill=black!5, minimum width=2.2cm, minimum height=1.0cm, align=center},
+  cloud/.style={draw, rounded corners=6pt, fill=black!10, minimum width=13.2cm, minimum height=1.2cm, align=center},
+  app/.style={draw, rounded corners, fill=white, minimum width=3.0cm, minimum height=1.0cm, align=center},
+  arr/.style={-{Stealth[length=2.2mm]}, thick},
+  darr/.style={{Stealth[length=2.2mm]}-{Stealth[length=2.2mm]}, thick, dashed}]
+\node[jn] (j1) {Junction A\\ LiDAR + \prism{}};
+\node[jn, right=of j1] (j2) {Junction B\\ LiDAR + \prism{}};
+\node[jn, right=of j2] (j3) {Maviththara\\ LiDAR + \prism{}};
+\node[jn, right=of j3] (j4) {Kesbewa\\ LiDAR + \prism{}};
+\draw[darr] (j1) -- node[above, font=\scriptsize]{platoons} (j2);
+\draw[darr] (j2) -- node[above, font=\scriptsize]{platoons} (j3);
+\draw[darr] (j3) -- node[above, font=\scriptsize]{platoons} (j4);
+\node[cloud, below=1.3cm of $(j2)!0.5!(j3)$] (cl) {Cloud junction graph\\ \scriptsize predicted queues, phase plans and delays per junction};
+\foreach \j in {j1,j2,j3,j4} { \draw[arr] (\j.south) -- (\j.south |- cl.north); }
+\node[app, below left=1.3cm and 0.2cm of cl.south] (route) {Commuter app\\ \scriptsize time-dependent routing};
+\node[app, below right=1.3cm and 0.2cm of cl.south] (glosa) {In-vehicle GLOSA\\ \scriptsize speed advisory};
+\draw[arr] (cl.south) -- (route.north);
+\draw[arr] (cl.south) -- (glosa.north);
+\node[draw, dashed, rounded corners, fit=(route)(glosa), inner sep=6pt, label={[font=\scriptsize]below:Road users}] {};
+\end{tikzpicture}}
+\caption{Envisaged city-scale architecture: LiDAR-equipped \prism{} junctions share platoon forecasts and publish their state to a cloud junction graph that serves commuter routing and speed advice}
+\label{fig:conc-future}
+\end{figure}
+
+{\emergencystretch=2em
+\begin{enumerate}[leftmargin=*]
+\item \textbf{City-scale coordination.} Neighbouring \prism{} controllers should exchange the platoons they release, so that each junction can extend its arrival term beyond the 75~m sensing range. Decentralised max-pressure control maximises network throughput using only local information~\cite{varaiya2013maxpressure,wongpiromsarn2012distributed}, and recent variants add corridor coordination without losing this property~\cite{xu2024smoothingmp}, making a corridor along the Piliyandala bypass a natural next step.
+\item \textbf{Cloud junction graph and commuter application.} Each junction would publish its predicted queues and delays to a cloud graph with time-dependent edge costs. A commuter application could then compute the minimum-time route with a time-dependent shortest-path search based on Dijkstra's algorithm~\cite{dijkstra1959} or A*~\cite{hart1968astar}, including predicted signal delays, and offer Green Light Optimised Speed Advisory (GLOSA)~\cite{katsaros2011glosa} so that drivers arrive on green.
+\item \textbf{Emergency-vehicle pre-emption.} The Traffic Police specifically asked for this. Emergency vehicles detected by the LiDAR or by a transponder would cause their approach to receive green as soon as the current intergreen allows; network-level schemes that combine routing with pre-emption~\cite{su2022emvlight} indicate the potential gain.
+\item \textbf{Real LiDAR pilot with police override.} A physical pilot at Maviththara with the RDA and the Police, first in shadow mode, should validate the simulation results, together with a formal interface through which officers can override the controller without switching the lights off.
+\item \textbf{Pedestrian and bus priority.} The pedestrian push-button minimum green of 15~s already exists as a parameter and should be implemented, and bus priority can be added within the max-pressure framework without losing its stability properties~\cite{xu2022tspmaxpressure}.
+\item \textbf{Edge deployment.} \prism{} and the perception tracker should be ported to an embedded platform such as an NVIDIA Jetson module in the signal cabinet, following recent edge-deployed adaptive signal systems~\cite{raza2025edgeatlc}.
+\item \textbf{More observation data and more junctions.} Further drone sessions covering the missed evening peak, weekends, rain and school hours would extend the scenario set beyond the conditions observed on a single weekday, and the study should be extended to the Kesbewa intersections named in the original permission request. The recorded footage of 2~October~2026 also supports further extraction that this project did not exhaust, in particular per-class waiting-time distributions and lane-level trajectories through the junction box.
+\item \textbf{Learn the turning shares online.} The offside-lane split of \cref{eq:impl-offside} currently uses turning shares fixed from the survey, which is the one place where the controller depends on prior observation rather than on what the sensor reports. A LiDAR observes each vehicle's exit as well as its approach, so the shares could be estimated online as an exponentially weighted average, exactly as the hidden-queue arrival rate already is. This would remove the last calibration dependency and let the controller follow a change in turning behaviour, such as a diversion upstream.
+\item \textbf{A shorter minimum green at night.} The night result of \cref{sec:eval-results} is the one scenario in which \prism{}-R does not win outright, and both the \est{0.6~s} gap and the residual waiting are dominated by the 10~s minimum through green, which at 80~veh/h is far longer than the queue needs. A demand-dependent minimum green, or a demand-dependent choice between resting in green and resting in red, should recover it.
+\end{enumerate}}
+
+\section{Chapter summary}
+
+This chapter showed that all seven objectives were achieved and answered the research question: in a drone-calibrated simulation, a transparent, mathematics-only controller fed by a simulated roadside LiDAR reduced average waiting time at the Maviththara junction in all \est{10} demand scenarios and on every held-out seed, by \est{40\%} on average and by between \est{14\%} and \est{85\%}, halved the green shown to empty approaches, and made the conditions that force police to take manual control substantially less frequent. It also showed that reaching this result required one honest revision, after the control law as first specified lost to the plan it was meant to replace. The problems encountered, the author's reflections and an indicative business case were presented, followed by a roadmap from a single intelligent junction to a coordinated, commuter-aware network. The results do not replace a physical pilot, but they provide a clear, quantified case for one, and a practical starting point for smarter signal control on Sri Lankan roads.

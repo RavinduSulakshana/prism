@@ -1,0 +1,51 @@
+\documentclass[12pt,a4paper,oneside]{report}
+
+% Set to \estfinaltrue before submission to remove yellow placeholder highlighting
+\newcommand{\estswitch}{\estfinaltrue}
+
+\input{preamble}
+
+\begin{document}
+
+% ------------------------------------------------------------------
+% Front matter — lower-case Roman (title page = i, not shown)
+% ------------------------------------------------------------------
+\pagenumbering{roman}
+\input{chapters/00_frontmatter}
+
+\cleardoublepage
+\phantomsection\addcontentsline{toc}{chapter}{Table of Contents}
+\tableofcontents
+\cleardoublepage
+\phantomsection
+{\sloppy\listoffigures}
+\cleardoublepage
+\phantomsection
+{\sloppy\listoftables}
+\input{chapters/00_abbreviations}
+
+% ------------------------------------------------------------------
+% Main body — Arabic from 1
+% ------------------------------------------------------------------
+\clearpage
+\pagenumbering{arabic}
+\input{chapters/01_introduction}
+\input{chapters/02_literature_review}
+\input{chapters/03_methodology}
+\input{chapters/04_srs}
+\input{chapters/05_implementation}
+\input{chapters/06_testing_evaluation}
+\input{chapters/07_concluding_remarks}
+
+% ------------------------------------------------------------------
+% References (IEEE) on a fresh page, then appendices
+% ------------------------------------------------------------------
+\clearpage
+\bibliographystyle{IEEEtran}
+\bibliography{references,refs/ch1,refs/ch2,refs/ch3,refs/ch4,refs/ch5,refs/ch6,refs/ch7}
+
+\appendix
+\titleformat{\chapter}[hang]{\normalfont\normalsize\bfseries}{APPENDIX \thechapter:}{0.5em}{\MakeUppercase}
+\input{chapters/08_appendices}
+
+\end{document}

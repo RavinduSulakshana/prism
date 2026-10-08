@@ -1,0 +1,109 @@
+% ==================================================================
+% Front matter: title page, declaration, abstract, acknowledgements
+% ==================================================================
+
+% ------------------------------------------------------------------
+% Title page
+% ------------------------------------------------------------------
+\begin{titlepage}
+\thispagestyle{empty}
+\begin{center}
+\vspace*{0.5cm}
+{\Large\bfseries [University Name]\par}
+\vspace{0.3cm}
+{\large [Faculty of Computing / Faculty Name]\par}
+\vspace{0.2cm}
+{\large [Department Name]\par}
+
+\vspace{1.8cm}
+\rule{\textwidth}{1pt}\\[0.5cm]
+{\LARGE\bfseries PRISM: A LiDAR-Driven, PCU-Weighted Pressure-Based Adaptive Traffic Signal Controller for Heterogeneous Sri Lankan Traffic\par}
+\vspace{0.4cm}
+{\Large A Drone-Calibrated SUMO Study of the Maviththara Junction\par}
+\vspace{0.3cm}
+{\normalsize\itshape (PRISM: Pressure-based Real-time Intersection Signal Management)\par}
+\rule{\textwidth}{1pt}
+
+\vspace{1.8cm}
+{\large A dissertation submitted in partial fulfilment of the requirements for the degree of\par}
+\vspace{0.2cm}
+{\large\bfseries BSc (Hons) Computer Science\par}
+
+\vspace{2.0cm}
+{\large\bfseries P R S Perera\par}
+\vspace{0.2cm}
+{\large Student ID: 29243\par}
+
+\vspace{1.2cm}
+{\large Supervisor: Ms. Hirushi Dilpriya\par}
+
+\vfill
+{\large October 2026\par}
+\end{center}
+\end{titlepage}
+\setcounter{page}{2}
+
+% ------------------------------------------------------------------
+% Declaration
+% ------------------------------------------------------------------
+\chapter*{Declaration}
+\addcontentsline{toc}{chapter}{Declaration}
+\thispagestyle{plain}
+
+I declare that this is my own work and that this dissertation does not incorporate, without acknowledgement, any material previously submitted for a degree or diploma in any other university or institute of higher learning. To the best of my knowledge and belief, it does not contain any material previously published or written by another person except where due acknowledgement is made in the text.
+
+I also hereby grant to [University Name] the non-exclusive right to reproduce and distribute this dissertation, in whole or in part, in print, electronic or any other medium. I retain the right to use this content, in whole or in part, in future works (such as articles or books).
+
+\vspace{1.5cm}
+\noindent
+\begin{tabular}{@{}p{0.55\textwidth}p{0.35\textwidth}@{}}
+\rule{0.45\textwidth}{0.4pt} & \rule{0.28\textwidth}{0.4pt}\\
+Signature of the candidate & Date\\
+P R S Perera (Student ID: 29243) & \\
+\end{tabular}
+
+\vspace{2cm}
+\noindent The above candidate has carried out research for the BSc (Hons) Computer Science dissertation under my supervision, and I confirm that this dissertation is suitable for submission for examination.
+
+\vspace{1.5cm}
+\noindent
+\begin{tabular}{@{}p{0.55\textwidth}p{0.35\textwidth}@{}}
+\rule{0.45\textwidth}{0.4pt} & \rule{0.28\textwidth}{0.4pt}\\
+Signature of the supervisor & Date\\
+Ms. Hirushi Dilpriya & \\
+\end{tabular}
+
+% ------------------------------------------------------------------
+% Abstract
+% ------------------------------------------------------------------
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+\thispagestyle{plain}
+
+Signalised junctions in the Colombo Metropolitan Region are still predominantly operated by fixed-time plans that cannot respond to fluctuating, highly heterogeneous demand in which motorcycles and three-wheelers filter between cars, buses and lorries. When queues become excessive, traffic police switch the signals off and direct traffic manually. This dissertation presents \prism{} (Pressure-based Real-time Intersection Signal Management), an adaptive signal controller designed for such conditions and evaluated at the Maviththara junction on the Piliyandala bypass.
+
+Three components were built. First, \dtx{} (Drone Trajectory eXtractor) converts nadir drone video into georeferenced vehicle trajectories using frame stabilisation, a YOLOv8s detector fine-tuned on locally annotated frames with sliced inference, ByteTrack tracking and homography-based georeferencing; it achieved a mAP@0.5 of \est{0.86} and yielded demand, turning ratios, saturation flow and per-vehicle waiting times from two one-hour sessions recorded on 2~October~2026. Second, these data calibrated a sublane SUMO model of the junction, in which \est{91.7\%} of turning movements satisfied the GEH~$<5$ criterion. Third, a Virtual LiDAR Sensor (\vls{}) reproduces the noise, dropout, occlusion and class confusion of a pole-mounted LiDAR, and supplies the only input to \prism{}. Artificial intelligence is used solely for offline vehicle detection; the control law itself is purely mathematical, combining a passenger-car-unit (PCU) weighted max-pressure score, a quadratic starvation-urgency multiplier, hysteresis and queue-clearance green-time bounds.
+
+Across ten held-out random seeds, \prism{} reduced mean waiting time per vehicle relative to the existing fixed-time plan by \est{18.8\%} under moderate (afternoon) demand and by \est{11.4\%} under heavy (morning) demand, and outperformed both SUMO actuated control and a Webster-optimised plan. Average queue length fell by \est{19.0\%} and \est{9.4\%} respectively, morning throughput rose by \est{3.9\%}, and CO$_2$ emissions fell by \est{5.1}--\est{6.7\%}; all improvements over fixed-time control were significant (Wilcoxon signed-rank, \est{$p<0.01$}). Performance degraded gracefully under sensor noise, remaining better than fixed-time control until LiDAR dropout reached approximately \est{30\%}. The results indicate that privacy-preserving LiDAR sensing combined with a transparent pressure-based law is a viable path towards adaptive control at Sri Lankan junctions.
+
+\vspace{0.5cm}
+\noindent\textbf{Keywords:} adaptive traffic signal control; max-pressure; LiDAR; heterogeneous traffic; passenger car unit; drone video analytics; SUMO; Sri Lanka
+
+% ------------------------------------------------------------------
+% Acknowledgements
+% ------------------------------------------------------------------
+\chapter*{Acknowledgements}
+\addcontentsline{toc}{chapter}{Acknowledgements}
+\thispagestyle{plain}
+
+I wish to express my sincere gratitude to my supervisor, Ms.\ Hirushi Dilpriya, for her guidance, patience and constructive feedback throughout this project. Her encouragement to ground an ambitious idea in careful measurement and honest evaluation shaped this dissertation in every chapter.
+
+I am grateful to the lecturers and academic staff of [University Name], whose teaching in algorithms, software engineering, machine learning and research methods provided the foundation on which this work was built, and to my colleagues for many useful discussions and for their help during the drone data collection at Maviththara.
+
+Finally, I owe my deepest thanks to my family, whose daily journeys through the Piliyandala traffic first inspired this research, and whose unwavering support, understanding and encouragement made its completion possible.
+
+\vspace{1cm}
+\begin{flushright}
+P R S Perera\\
+October 2026
+\end{flushright}

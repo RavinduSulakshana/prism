@@ -1,0 +1,163 @@
+\chapter{Methodology}\label{ch:method}
+
+% ==================================================================
+% Chapter 3 — Methodology (writer W3)
+% ==================================================================
+
+This chapter explains how the research was planned and conducted. It justifies the philosophical stance, reasoning approach and research strategy against their alternatives, describes how facts were gathered, traces the execution workflow against objectives O1--O7, and closes with project management, the timeline and ethical safeguards.
+
+% ------------------------------------------------------------------
+\section{Research paradigm}\label{sec:method-paradigm}
+
+A research paradigm determines what counts as legitimate knowledge and how evidence is judged~\cite{saunders2019research}. This research adopted a \emph{positivist} paradigm with \emph{pragmatist} elements. Its central claim, that a pressure-based controller reduces average waiting time at the Maviththara junction relative to the fixed-time plan, is an empirical proposition about a physical system whose waiting time, queues and throughput can be measured objectively and repeatedly.
+
+The research also had to \emph{build} something useful for specific stakeholders, the Piliyandala Traffic Police and the Road Development Authority (RDA). Choices such as simulating the LiDAR sensor rather than buying one, or using mock demand before drone data arrived, were driven by what worked within the project's constraints, which is characteristically pragmatist.
+
+An \emph{interpretivist} paradigm, which seeks the subjective meanings people attach to a phenomenon (for example, how officers decide to take manual control), was rejected as the primary stance. Such insight informed the problem framing, but an interpretivist reading could not answer whether one control law produces less delay than another.
+
+% ------------------------------------------------------------------
+\section{Research approach}\label{sec:method-approach}
+
+The research followed a \emph{deductive}, \emph{quantitative} approach, moving from theory to a testable expectation and then to data. Max-pressure theory states that serving the phase with the greatest weighted difference between upstream and downstream queues stabilises any serviceable demand~\cite{varaiya2013maxpressure}; signal timing theory states that a demand-blind fixed plan wastes green time whenever arrivals fluctuate~\cite{webster1958}. From these premises the working hypothesis was derived that a PCU-weighted pressure controller would lower average waiting time relative to fixed-time, actuated and Webster-optimised control, and that this advantage would shrink as the junction approached saturation. It was tested statistically as paired differences in performance indicators~\cite{wilcoxon1945}.
+
+An \emph{inductive} approach, building theory from observed patterns, was not adopted because strong control theory already existed; the gap in \cref{ch:lit} was a lack of evidence on how it performs under heterogeneous Sri Lankan traffic and imperfect LiDAR sensing. Inductive reasoning played only a supporting role, for example when motorcycle filtering observed in the drone video shaped the simulation model.
+
+% ------------------------------------------------------------------
+\section{Research strategy}\label{sec:method-strategy}
+
+The research strategy combined \emph{Design Science Research} (DSR) with a \emph{controlled simulation experiment}. DSR creates purposeful artefacts and judges them by their utility~\cite{hevner2004design}. This research produced three: the Drone Trajectory eXtractor (\dtx{}), the Virtual LiDAR Sensor (\vls{}) and the Pressure-based Real-time Intersection Signal Management (\prism{}) controller. The DSR process model of Peffers et al.~\cite{peffers2007dsrm} provided the backbone of the workflow in \cref{sec:method-workflow}. Hevner's guidelines of problem relevance, rigorous evaluation and design as a search process~\cite{hevner2004design} were applied by grounding the problem in stakeholder needs, evaluating against three baselines, and iterating the design on mock data before real data arrived.
+
+Because intervening on a live junction was neither safe nor permissible, the artefacts were evaluated through controlled experiments on a calibrated microscopic model built in Simulation of Urban MObility (\sumo{})~\cite{lopez2018sumo,dowling2004toolbox}. Simulation allowed identical demand to be replayed under every controller and sensor faults to be injected at chosen intensities; its price is that conclusions are only as valid as the model, hence the emphasis on drone-based calibration.
+
+A \emph{case study} could not compare controllers under identical conditions, a \emph{survey} would have measured perceptions rather than delay, and \emph{action research} would have required changing the real signals, beyond the remit of an undergraduate project, though it suits a future field pilot.
+
+% ------------------------------------------------------------------
+\section{Fact collection mechanisms}\label{sec:method-facts}
+
+\textbf{Literature review.} A structured review, weighted towards work from 2021 onwards, established the state of the art in signal control, sensing, aerial detection and simulation, and was the systematic route to the research gap (O2; \cref{ch:lit}).
+
+\textbf{Drone video survey.} Real traffic was recorded from an Unmanned Aerial Vehicle (UAV) hovering above the junction on 2~October~2026, in Session~M (07:00--08:00, morning peak, high congestion) and Session~A (13:30--14:30, moderate demand). A third session (17:00--18:00) had been approved but could not be flown because of bad weather. A nadir drone view captures all four approaches at once with little occlusion, whereas manual counts cannot record trajectories or waiting times for hundreds of vehicles and roadside cameras give only oblique views. Drone video is an established trajectory source~\cite{krajewski2018highd,barmpounakis2020pneuma}; flight details are in \cref{app:drone}.
+
+\textbf{Stakeholder discussion.} On 17~September~2026 the author met representatives of the Piliyandala Traffic Police and the RDA. The discussion was semi-structured and unrecorded; no individual is named. Two needs emerged: to reduce the time officers spend directing traffic manually, and to reduce the waiting time of every road user. Emergency vehicles were reported to rely on other traffic making way, so pre-emption was noted as future work. Only practitioners could confirm the problem and define success for them (O1).
+
+\textbf{Simulation experiments.} Controlled experiments in \sumo{} generated the evaluation data (O7). Development began with \emph{mock data}, in which demand was split evenly across the four approaches at 300, 500 and 700~veh/h. This allowed the complete sensing and control stack to be verified months before the flights, and symmetric demand made errors easy to detect. The drone data were the final piece, replacing mock demand and calibrating the model.
+
+% ------------------------------------------------------------------
+\section{Research methodology execution workflow}\label{sec:method-workflow}
+
+\Cref{tab:method-workflow} summarises each DSR stage, its outputs and objectives; the subsections explain each stage.
+
+\begin{table}[htbp]
+\centering
+\caption{Research methodology execution workflow.}
+\label{tab:method-workflow}
+\small
+\setstretch{1.0}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.7cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}p{3.6cm}c@{}}
+\toprule
+\textbf{Phase} & \textbf{Activities} & \textbf{Outputs} & \textbf{Obj.}\\
+\midrule
+Problem identification & Site observation of the 78~s fixed plan; permission request (12.06.2026); police/RDA discussion (17.09.2026) & Problem statement; stakeholder needs & O1\\
+\addlinespace
+Relevance justification & Review of congestion, mixed-traffic and manual-control context in Sri Lanka & Motivation; relevance argument & O1, O2\\
+\addlinespace
+Comparative analysis \& gap justification & Critical review of fixed-time, actuated, adaptive, max-pressure and learning controllers, sensors and simulators & Comparison of existing systems; research gap & O2\\
+\addlinespace
+Define \& finalise objectives & Translation of the gap and stakeholder needs into research question, aim, objectives and requirements & O1--O7; FR/NFR lists & O1--O7\\
+\addlinespace
+Design, development \& data handling & Mock-data model; \dtx{}; calibration; \vls{}; \prism{} and baselines; versioned data and configurations & Working artefacts; calibrated model; anonymous trajectory store & O3--O6\\
+\addlinespace
+Evaluation \& communication & Paired-seed experiments; Wilcoxon tests; sensitivity analysis; supervisor reviews; thesis & Results; thesis; reproducible repository & O7\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Problem identification}
+Repeated observation showed that the junction's fixed-time plan runs four phases (bypass through 21~s, bypass protected right 8~s, cross-road through 15~s, cross-road protected right \est{14~s}) in a 78~s cycle, each followed by 3~s amber and 2~s all-red, regardless of demand. Morning-peak queues on the Piliyandala bypass routinely forced the police to take manual control. After a permission request to the Piliyandala Police (12~June~2026), the problem was confirmed with the police and the RDA on 17~September~2026.
+
+\subsection{Relevance justification}
+Relevance was established by linking the local symptoms to wider evidence: chronic congestion in the Colombo region~\cite{jica2014comtrans}, a vehicle fleet dominated by motorcycles and three-wheelers~\cite{dmt_stats}, and the absence of any adaptive control at the junction.
+
+\subsection{Comparative analysis and gap justification}
+Existing systems and algorithms were compared on sensing needs, treatment of heterogeneous traffic, fairness and explainability (\cref{sec:lit-existing,sec:lit-reflection}). The comparison showed that pressure-based control is theoretically attractive but had rarely been evaluated with PCU weighting, realistic LiDAR imperfections and drone-calibrated mixed traffic, which justified the research gap.
+
+\subsection{Define and finalise objectives}
+The gap and the stakeholder needs were translated into one research question, an aim and seven objectives (\cref{sec:intro-objectives}), and then into functional and non-functional requirements (\cref{ch:srs}). The decision to keep the controller purely mathematical, without machine learning, was fixed at this stage to secure explainability.
+
+\subsection{Design, development, data management and handling}
+First, a \sumo{} model of the junction (two lanes in and two out on every arm, give-way slip lanes for left turns, and the four-phase signal) was built and driven by mock demand. Second, \dtx{} was developed on sample clips to stabilise video, detect and track the seven vehicle classes and compute per-vehicle waiting time. Third, after the flights, \dtx{} outputs replaced mock demand, and the model was calibrated using the GEH statistic for counts and the Mean Absolute Percentage Error (MAPE) for average waiting time~\cite{dowling2004toolbox}. Fourth, \vls{} was built to turn simulated vehicles into a noisy LiDAR object list. Fifth, \prism{} and the baselines were implemented and tuned. The \vls{} and \prism{} prototypes were in fact first written on mock data and refined after calibration.
+
+Only anonymous trajectories (track identifier, class, time, position and speed) and aggregated flows were stored; raw video was kept offline. All scenario and parameter files were held in a Git repository, so every result is traceable to a configuration version. Random seeds were partitioned: seeds 1--5 were used only for parameter tuning, and seeds 6--15 were reserved for the final evaluation to avoid optimistic bias.
+
+\subsection{Evaluation and communication}
+Each controller was run for a 300~s warm-up followed by 3600~s of measurement on every evaluation seed, with all controllers sharing identical demand realisations so that comparisons were paired. Differences were tested with the Wilcoxon signed-rank test~\cite{wilcoxon1945}, and sensitivity to sensor noise, dropout and controller parameters was examined (\cref{ch:eval}). Results were communicated through sprint reviews with the supervisor and this thesis.
+
+% ------------------------------------------------------------------
+\section{Project management methodology}\label{sec:method-pm}
+
+The project was managed with \emph{Scrum}~\cite{schwaber2020scrum}, adapted for a solo researcher. Work ran in two-week sprints, each with one increment as its goal (for example, ``\vls{} with noise and dropout''). The supervisor acted as product owner, reviewing each increment and updating the backlog of repository issues. The author combined the developer and Scrum Master roles.
+
+Scrum suited the problem because uncertainties such as detector accuracy on small motorcycles and controller stability under noisy sensing could only be resolved by building and testing. A \emph{Waterfall} model was rejected because committing to a full design up front would have risked late and costly rework once drone data arrived. \emph{Kanban} lacks the fixed review rhythm and time-boxes needed to protect the flight-date milestone. \emph{PRINCE2} targets organisational projects with boards and formal stage controls, an overhead disproportionate for a one-person project.
+
+\subsection{Project timeline}
+\Cref{fig:method-gantt} shows the timeline from June to October 2026 at weekly resolution, with the two-week sprints along the top. The drone permission chain was the critical path, so every component was verified on mock data before the flights, leaving the final weeks for extraction, calibration and evaluation.
+
+\begin{figure}[htbp]
+\centering
+\setstretch{1.0}
+\resizebox{\textwidth}{!}{%
+\begin{ganttchart}[
+    x unit=0.42cm, y unit title=0.45cm, y unit chart=0.42cm,
+    vgrid={*1{black!12, dotted}}, hgrid style/.style={black!12, dotted}, hgrid,
+    title height=1, title label font=\scriptsize,
+    bar height=0.55, bar top shift=0.22, bar/.append style={fill=black!35, draw=black},
+    bar label font=\scriptsize, bar label node/.append style={align=right},
+    group height=0.55, group top shift=0.22, group/.append style={fill=black!75},
+    group label font=\scriptsize\bfseries,
+    milestone height=0.6, milestone top shift=0.2, milestone/.append style={fill=black},
+    milestone label font=\scriptsize\itshape,
+    link/.style={-{Stealth[length=1.5mm]}, black!60}
+  ]{1}{22}
+  \gantttitle{Jun 2026}{5} \gantttitle{Jul}{4} \gantttitle{Aug}{4} \gantttitle{Sep}{5} \gantttitle{Oct}{4} \\
+  \gantttitlelist{1,...,22}{1} \\
+  \gantttitle{S1}{2} \gantttitle{S2}{2} \gantttitle{S3}{2} \gantttitle{S4}{2} \gantttitle{S5}{2}
+  \gantttitle{S6}{2} \gantttitle{S7}{2} \gantttitle{S8}{2} \gantttitle{S9}{2} \gantttitle{S10}{2} \gantttitle{S11}{2} \\
+  \ganttgroup{Research foundation}{1}{9} \\
+  \ganttmilestone{Permission request letter (12.06)}{2} \\
+  \ganttbar{Literature review}{1}{9} \\
+  \ganttbar{Problem, objectives \& requirements}{3}{6} \\
+  \ganttgroup{Mock-data development}{5}{16} \\
+  \ganttbar{SUMO model with mock demand}{5}{10} \\
+  \ganttbar{PRISM prototype \& baselines}{8}{14} \\
+  \ganttbar{Virtual LiDAR Sensor (VLS)}{10}{14} \\
+  \ganttbar{DTX on sample clips}{12}{17} \\
+  \ganttbar{Mock-data verification \& tuning}{13}{16} \\
+  \ganttgroup{Permissions \& field data}{16}{18} \\
+  \ganttmilestone{Police/RDA discussion (17.09)}{16} \\
+  \ganttmilestone{Police letter to CAASL (22.09)}{17} \\
+  \ganttmilestone{MoD clearance (25.09)}{17} \\
+  \ganttmilestone{CAASL approval (01.10)}{18} \\
+  \ganttmilestone{Drone flights (02.10)}{18} \\
+  \ganttgroup{Analysis \& reporting}{15}{22} \\
+  \ganttbar{DTX processing \& calibration}{18}{19} \\
+  \ganttbar{Evaluation \& sensitivity analysis}{19}{21} \\
+  \ganttbar{Thesis writing}{15}{22} \\
+  \ganttmilestone{Thesis submission}{22}
+\end{ganttchart}}
+\caption{Project timeline, June--October 2026 (weeks beginning Monday 1~June; S1--S11 are two-week sprints).}
+\label{fig:method-gantt}
+\end{figure}
+
+\subsection{Ethical considerations}\label{sec:method-ethics}
+Because the only human-related data were aerial recordings of public road users, the safeguards focused on lawful flight and anonymity.
+
+\textbf{Regulatory approvals.} The flights were authorised through a supporting letter from the Piliyandala Police Station to the Director General of the Civil Aviation Authority of Sri Lanka (CAASL) (22~September~2026); Ministry of Defence (MoD) security clearance for educational use on 2~October~2026 between 06:00 and 18:00 (25~September~2026; reference MOD/MLO/DRONE/03/2026 (7969)); and CAASL approval, reference OP/36/2, under Sri Lanka Civil Aviation Implementing Standard (SLCAIS) 053 Rev.03~\cite{caasl_drone} (1~October~2026). The conditions, a maximum height of 400~ft Above Ground Level (AGL), visual line of sight at all times and prior notification of the Sri Lanka Air Force and the police, were observed. A CAASL-registered operator flew the aircraft. Redacted copies of the letters are in \cref{app:letters}.
+
+\textbf{Privacy and anonymity.} Privacy was protected by design: from a flight altitude of about \est{90~m}, faces and number plates occupy only a few pixels and cannot be identified. Only anonymous trajectories were kept; no personal data were processed. As a matter of policy, raw video was kept offline on an encrypted drive and is deleted once processing and examination are complete. These measures follow the data-minimisation and storage-limitation principles of Sri Lanka's Personal Data Protection Act~\cite{pdpa2022srilanka}. Individual road-user consent was neither required nor practicable; the police and the RDA consented institutionally to the use of their input, with no officer named.
+
+\textbf{Professional conduct.} The work followed the BCS Code of Conduct~\cite{bcs_codeofconduct}. In the \emph{public interest}, safety constraints were placed above efficiency and the limits of simulation-based evidence were stated honestly. \emph{Professional competence and integrity} were maintained by acknowledging all sources and reporting unfavourable as well as favourable results. \emph{Duty to relevant authority} was met by respecting aviation and defence regulations and institutional procedures.
+
+% ------------------------------------------------------------------
+\section{Chapter summary}\label{sec:method-summary}
+
+This chapter justified a positivist paradigm with pragmatist elements, a deductive quantitative approach, and a strategy combining Design Science Research with simulation experiments. Facts came from literature, a two-session drone survey, the police/RDA discussion and simulation beginning with mock demand. The workflow linked each stage to O1--O7; the project ran as Scrum sprints with the supervisor as product owner; and ethical safeguards ensured lawful flights, anonymity and professional conduct.

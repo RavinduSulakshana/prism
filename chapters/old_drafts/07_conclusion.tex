@@ -1,0 +1,120 @@
+\chapter{Conclusion and Future Work}\label{ch:conclusion}
+
+\section{Summary of the Work}
+
+This research set out to show that a junction typical of suburban Colombo---the Maviththara junction on the Piliyandala bypass, controlled today by a fixed-time plan and, at its worst, by a traffic police officer standing in the box---could be operated more efficiently by an adaptive controller that understands heterogeneous Sri Lankan traffic. Three artefacts were built and evaluated.
+
+The first, the Drone Trajectory eXtractor (\dtx{}), converted nadir drone footage of two one-hour sessions into anonymous vehicle trajectories. It combined frame stabilisation, a YOLOv8s detector fine-tuned on locally annotated frames with sliced inference, ByteTrack association, homography-based georeferencing and trajectory smoothing, and derived from the trajectories every quantity needed to build and calibrate a simulation: per-class arrival flows, turning ratios, saturation flow, free-flow speed, queues and waiting times. The second, the Virtual LiDAR Sensor (\vls{}), emulated a pole-mounted 360\textdegree{} LiDAR inside \sumo{} with a deliberately pessimistic error model covering range-dependent noise and dropout, occlusion by tall vehicles, size-class confusion and clutter. The third, \prism{}, is a pressure-based signal controller that weighs queues and imminent arrivals in passenger car units, discounts them by downstream occupancy, multiplies them by an urgency term that guarantees fairness, and makes acyclic phase decisions every second under hard safety constraints. Artificial intelligence was used only for vehicle detection in \dtx{}; the controller itself is a transparent mathematical rule whose every decision can be explained and audited.
+
+Development followed the order set out in \cref{ch:method}: the controller and sensor were first developed and unit-tested on mock demand, and only at the end was the real demand extracted from the drone footage used to calibrate the model and evaluate the controllers against fixed-time, actuated and Webster-optimised baselines.
+
+\section{Achievement of Objectives}
+
+\Cref{tab:objectives} maps each objective stated in \cref{ch:intro} to its outcome and to the part of this report where the evidence can be found.
+
+\begin{table}[H]
+\centering
+\caption{Achievement of the research objectives.}
+\label{tab:objectives}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}X l >{\raggedright\arraybackslash}p{3.6cm}@{}}
+\toprule
+Objective & Status & Evidence \\
+\midrule
+Review classical, adaptive, max-pressure and learning-based signal control, and sensing for heterogeneous traffic & Achieved & \cref{ch:lit} \\
+Collect drone footage of Maviththara junction for morning and afternoon peaks & Achieved & \cref{ch:method} \\
+Design and implement \dtx{} to extract trajectories, demand and waiting times & Achieved & \cref{sec:dtx}, \cref{sec:dtx-eval} \\
+Build and calibrate a heterogeneous \sumo{} model of the junction & Achieved & \cref{ch:impl}, \cref{sec:calibration} \\
+Design a realistic simulated LiDAR sensor (\vls{}) & Achieved & \cref{sec:vls}, \cref{sec:integration} \\
+Design and implement the \prism{} controller & Achieved & \cref{sec:prism}, \cref{ch:impl} \\
+Evaluate \prism{} against fixed-time, actuated and Webster baselines & Achieved & \cref{sec:results} \\
+Assess robustness to sensor imperfections & Achieved & \cref{sec:sensitivity} \\
+Validate on a physical LiDAR at the junction & Not in scope; proposed as future work & \cref{sec:futurework} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Key Findings}
+
+The principal findings of this research are as follows.
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Drone video is a practical calibration source for heterogeneous traffic.} A fine-tuned single-stage detector reached \est{0.86} mAP@0.5 across seven Sri Lankan vehicle classes, and the resulting model met the GEH criterion for \est{100\%} of approaches and \est{91.7\%} of movements with a waiting-time MAPE of \est{6.9--8.4\%}. Fine-tuning on local footage and sliced inference were both essential; the off-the-shelf aerial model reached only \est{0.54} mAP@0.5.
+  \item \textbf{Two-wheelers and three-wheelers dominate the traffic stream.} Motorcycles and three-wheelers formed about \est{60\%} of vehicles in both sessions, which makes PCU weighting, rather than plain vehicle counts, the appropriate measure of load.
+  \item \textbf{\prism{} reduced waiting time substantially.} Relative to the existing fixed-time plan, average waiting time fell by \est{18.8\%} in the moderate afternoon period and by \est{11.4\%} in the congested morning peak, with significant improvements over actuated and Webster-optimised control and improvements in travel time, queue length, stops, 95th-percentile waiting time and CO$_2$ emissions.
+  \item \textbf{Gains shrink as the junction approaches capacity.} In the morning peak the junction operates close to saturation, and no reallocation of green time can create additional capacity. Adaptive control is therefore a complement to, not a substitute for, capacity and network measures.
+  \item \textbf{A realistic LiDAR is good enough.} The difference between \prism{} with simulated noisy LiDAR and with perfect ground truth was only about \est{1--2} s, and \prism{} still outperformed the existing plan with \est{30\%} detection dropout.
+  \item \textbf{The controller is light and explainable.} A decision took \est{0.4} ms on average, and every decision can be traced to a pressure score that an engineer or police officer can interpret.
+\end{enumerate}
+
+\section{Contributions}
+
+This research makes four contributions. First, it provides an open, end-to-end and reproducible pipeline (\dtx{}) for turning low-cost drone footage of a mixed-traffic junction into a calibrated \sumo{} model, including a definition of waiting time that is consistent between observation and simulation. Second, it adapts max-pressure control~\cite{varaiya2013maxpressure} to heterogeneous traffic and partial observability by measuring pressure in PCU, adding a short-horizon arrival term, a downstream occupancy discount and a quadratic urgency term, and by enclosing it in the safety and fairness constraints required for deployment. Third, it contributes a parameterised LiDAR error model and a systematic quantification of how sensing errors translate into control performance, which is useful to any authority weighing sensor procurement. Fourth, it provides, to the author's knowledge, the first drone-calibrated adaptive-control study of a Sri Lankan suburban junction, establishing a baseline against which future deployments in the Colombo Metropolitan Region can be compared.
+
+\section{Limitations}
+
+The conclusions above must be read in the light of several limitations.
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{Single junction.} Only one isolated junction was studied. Interactions with neighbouring junctions on the Piliyandala bypass, including upstream platoons and downstream blocking, were represented only through boundary conditions.
+  \item \textbf{Limited observation period.} The demand came from two one-hour sessions recorded on a single day, 2 October 2026. Day-to-day variation, weekends, school holidays and special events were not captured.
+  \item \textbf{Simulated, not real, LiDAR.} The \vls{} is a statistical error model. Although deliberately pessimistic, it cannot reproduce every failure mode of a physical sensor, such as heavy rain, spray, reflective surfaces or mounting vibration.
+  \item \textbf{Pedestrians and police manual control not modelled.} Pedestrian crossings were not simulated, and the practice of police officers switching off the signals and directing traffic manually during severe congestion---a key motivation of this research---lies outside what the simulation can represent.
+  \item \textbf{Weather and lighting.} Both sessions were recorded in dry daylight conditions; behaviour in monsoon rain or at night was not studied.
+  \item \textbf{Adopted PCU values.} PCU factors were adopted from the literature for urban mixed traffic rather than estimated at the site. Site-specific PCUs could alter the relative weighting of approaches.
+  \item \textbf{Field of view.} At the flight altitude, long morning queues extended beyond the camera frame, so queue validation relied on censored indicators.
+\end{itemize}
+
+\section{Future Work}\label{sec:futurework}
+
+The long-term vision motivating this research extends well beyond a single junction. The author envisages a city in which every signalised junction is equipped with a roadside LiDAR and a \prism{} controller, and in which the junctions, a cloud service and commuters' phones form a single cooperative system. \Cref{fig:future-arch} illustrates this architecture, and the following directions describe the steps towards it.
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  node distance=1.0cm and 0.6cm,
+  jn/.style={draw, rounded corners, fill=blue!10, minimum width=2.2cm, minimum height=1.0cm, align=center},
+  cloud/.style={draw, rounded corners=6pt, fill=orange!15, minimum width=10.5cm, minimum height=1.2cm, align=center},
+  app/.style={draw, rounded corners, fill=green!12, minimum width=3.0cm, minimum height=1.0cm, align=center},
+  arr/.style={-{Stealth[length=2.2mm]}, thick},
+  darr/.style={{Stealth[length=2.2mm]}-{Stealth[length=2.2mm]}, thick, dashed}]
+\node[jn] (j1) {Junction A\\ LiDAR + \prism{}};
+\node[jn, right=of j1] (j2) {Junction B\\ LiDAR + \prism{}};
+\node[jn, right=of j2] (j3) {Maviththara\\ LiDAR + \prism{}};
+\node[jn, right=of j3] (j4) {Junction D\\ LiDAR + \prism{}};
+\draw[darr] (j1) -- node[above, font=\scriptsize]{platoons} (j2);
+\draw[darr] (j2) -- node[above, font=\scriptsize]{platoons} (j3);
+\draw[darr] (j3) -- node[above, font=\scriptsize]{platoons} (j4);
+\node[cloud, below=1.3cm of $(j2)!0.5!(j3)$] (cl) {Cloud junction graph\\ \scriptsize predicted queues, phase plans and delays per junction};
+\foreach \j in {j1,j2,j3,j4} { \draw[arr] (\j.south) -- (\j.south |- cl.north); }
+\node[app, below left=1.3cm and 0.2cm of cl.south] (route) {Commuter app\\ \scriptsize time-dependent routing};
+\node[app, below right=1.3cm and 0.2cm of cl.south] (glosa) {In-vehicle GLOSA\\ \scriptsize speed advisory};
+\draw[arr] (cl.south) -- (route.north);
+\draw[arr] (cl.south) -- (glosa.north);
+\node[draw, dashed, rounded corners, fit=(route)(glosa), inner sep=6pt, label={[font=\scriptsize]below:Road users}] {};
+\end{tikzpicture}
+\caption{Envisaged city-scale architecture: LiDAR-equipped \prism{} junctions share platoon forecasts, publish state to a cloud junction graph, and the graph serves commuter routing and speed advisory.}
+\label{fig:future-arch}
+\end{figure}
+
+\paragraph{Coordination between neighbouring junctions.} A natural first extension is to let adjacent \prism{} controllers exchange their LiDAR-observed departures. Because each controller knows which vehicles it has just released and on which exit, it can forecast the platoon that will arrive at the next junction and its arrival time; the receiving controller can include that forecast in its arrival term $A_a$ beyond the 75~m sensing range, producing green waves without a central coordinator. Decentralised max-pressure control has the important theoretical property that, under mild conditions, it maximises network throughput while each junction uses only local information~\cite{varaiya2013maxpressure,wongpiromsarn2012distributed}, which makes such a corridor-scale deployment along the Piliyandala bypass both scalable and analytically well founded.
+
+\paragraph{Cloud junction graph.} Each junction would publish, at regular intervals, its current queues, predicted phase sequence and predicted delay per movement to a cloud service that represents the road network as a graph whose edge costs are time-dependent. Unlike crowd-sourced speed data, this graph would be informed by the controllers' own intentions, so delays could be predicted before they materialise.
+
+\paragraph{Commuter routing application.} On top of this graph, a commuter leaving home could request the minimum-time route to a workplace or school. Because edge costs vary with departure time, the appropriate algorithm is a time-dependent shortest-path search, a generalisation of Dijkstra's algorithm~\cite{dijkstra1959} in which the cost of traversing an edge depends on the arrival time at its tail and includes the predicted signal delay at the next junction. Under the first-in-first-out property of road links the label-setting approach remains correct, and A* heuristics can accelerate it for a city-scale network.
+
+\paragraph{Green Light Optimal Speed Advisory.} Since \prism{} knows its planned phase sequence a few seconds ahead, it could broadcast predicted green windows to vehicles, enabling GLOSA, which advises drivers of a speed that lets them arrive on green and avoid a stop~\cite{katsaros2011glosa}. Because an acyclic controller has less predictable timing than a fixed plan, a confidence interval on the predicted switching time would be needed.
+
+\paragraph{Real LiDAR pilot at Maviththara.} The most important next step is to validate the simulation results physically. A pilot installation of a single LiDAR at the Maviththara junction, undertaken jointly with the Road Development Authority and the Sri Lanka Police, would first run \prism{} in shadow mode---computing decisions without actuating the signals---so that its recommendations could be compared with the actual fixed-time plan and with the decisions of traffic officers, before any closed-loop trial.
+
+\paragraph{Pedestrians, emergency vehicles and buses.} The controller already includes a pedestrian minimum-green parameter; a full implementation with push buttons or LiDAR-based pedestrian detection is needed. Emergency-vehicle pre-emption and bus priority could be added naturally by increasing the weight of detected ambulances or buses in the pressure calculation, and a formal police override interface would allow officers to take manual control without switching the signals off.
+
+\paragraph{Edge deployment.} The controller's sub-millisecond decision time suggests that \prism{} and the perception tracker could run on a low-power embedded platform such as an NVIDIA Jetson module housed in the signal cabinet, with the LiDAR point-cloud processing on the same device.
+
+\paragraph{More observation data.} Further drone sessions on weekends, during school hours and in monsoon rain, and at neighbouring junctions, would strengthen the calibration, enable site-specific PCU estimation, and test whether the results generalise.
+
+\section{Concluding Remarks}
+
+Traffic congestion at junctions such as Maviththara costs Sri Lankan commuters time, fuel and patience every day, and the present combination of fixed-time plans and manual police control is not equal to the heterogeneous and fluctuating traffic of the Colombo suburbs. This research has demonstrated, in a carefully calibrated simulation grounded in real drone observations, that a transparent mathematical controller fed by a roadside LiDAR can reduce waiting time by roughly \est{11--19\%} without new road space, while remaining fair to every approach, robust to sensing errors and light enough to run on inexpensive hardware. The results do not remove the need for a physical pilot, but they provide a clear, quantified case for one, and a practical path from a single intelligent junction to a coordinated, commuter-aware urban network.

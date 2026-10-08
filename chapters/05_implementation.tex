@@ -1,0 +1,1121 @@
+% ==================================================================
+% Chapter 5 — Implementation / Designing   (writer W5)
+% ==================================================================
+\chapter{Implementation}\label{ch:impl}
+
+\section{Chapter overview}
+
+This chapter explains how the artefact specified in \cref{ch:srs} was designed and built. It has four components: the Drone Trajectory eXtractor (\dtx{}), which turns the drone videos into trajectories, waiting times and calibration data; a Simulation of Urban MObility (\sumo{}) model of the junction; the Virtual LiDAR Sensor (\vls{}), which imitates an imperfect pole-mounted Light Detection and Ranging (LiDAR) unit; and the Pressure-based Real-time Intersection Signal Management (\prism{}) controller, the main contribution.
+\Cref{sec:impl-dtx,sec:impl-sumo,sec:impl-vls,sec:impl-prism} present each algorithm and \cref{sec:impl-baselines} the baselines. \Cref{sec:impl-tech} justifies the technology stack and \cref{sec:impl-key} presents the key code.
+
+The \sumo{} network, the \vls{} and \prism{} were first developed and tested against balanced demand split evenly across the four approaches; the drone-derived data were introduced afterwards, calibrating the model and parameterising the ten demand scenarios on which every reported experiment runs. The control law itself is purely mathematical; artificial intelligence is used only for
+vehicle detection inside \dtx{}. \Cref{sec:impl-prism} also records how the control law was revised into \prism{}-R after its first evaluation, and why.
+
+% ------------------------------------------------------------------
+\section{Design of the algorithms}\label{sec:impl-design}
+
+\subsection{Drone Trajectory eXtractor (DTX)}\label{sec:impl-dtx}
+
+\dtx{} converts each one-hour 4K video (30 frames per second, processed at 10) into metric trajectories and calibration quantities (\cref{alg:dtx}).
+
+\paragraph{Stabilisation.} Wind caused slow drift of the hovering drone, so every frame was registered to a reference frame with Oriented FAST and Rotated BRIEF
+(ORB) features~\cite{rublee2011orb}, filtered by Random Sample
+Consensus (RANSAC)~\cite{fischler1981ransac}.   The estimated $3\times3$ matrix
+$\mathbf{H}_t$ warps frame $t$ onto the reference.
+
+\paragraph{Detection.} Vehicles were detected with YOLOv8s~\cite{jocher2023yolov8}, a single-stage
+You Only Look Once (YOLO) detector, initialised from weights trained on the aerial VisDrone2019-DET
+dataset~\cite{zhu2022visdrone}, whose \emph{tricycle} and \emph{awning-tricycle} classes resemble Sri
+Lankan three-wheelers. The model was fine-tuned on \est{450} annotated frames from the two sessions
+with the seven classes of \cref{tab:impl-vtypes}. At about \est{90~m} altitude a motorcycle occupies
+roughly 20 pixels, so inference used Slicing Aided Hyper Inference (SAHI)~\cite{akyon2022sahi} with
+$2\times2$ tiles and an overlap ratio of 0.2.
+
+\paragraph{Tracking.} Detections were linked into tracks with ByteTrack~\cite{zhang2022bytetrack}
+(track threshold 0.5, match threshold 0.8, buffer 30 frames).  Its second pass over low-confidence boxes recovers partly hidden motorcycles.
+The class of a track was fixed by majority vote over its frames.
+
+\paragraph{Pixel-to-metre conversion.} A ground-plane homography was estimated from at least four
+control points (stop-line ends and lane-marking corners, using the 3.5~m lane width and satellite
+imagery). A stabilised pixel $(u,v)$ maps to ground coordinates $(x,y)$ by
+\begin{equation}
+  \lambda \begin{bmatrix} x \\ y \\ 1 \end{bmatrix} = \mathbf{G}
+  \begin{bmatrix} u \\ v \\ 1 \end{bmatrix}, \qquad \mathbf{G}\in\mathbb{R}^{3\times3},
+  \label{eq:impl-homography}
+\end{equation}
+where $\lambda$ is a scale factor~\cite{hartley2004mvg}. The resulting ground sample distance (GSD)
+was \est{$\approx$2.6~cm/px} and the reprojection error on held-out points \est{0.18~m}.
+
+\paragraph{Smoothing and speed.} Positions were smoothed with a Savitzky--Golay filter
+\cite{savitzky1964} (window of 11 samples, polynomial order 2), which removes jitter without the lag of a moving average. The speed at sample $k$ is
+\begin{equation}
+  v_k = \frac{\lVert \tilde{\mathbf{p}}_k - \tilde{\mathbf{p}}_{k-1} \rVert}{\Delta t},
+  \qquad \Delta t = 0.1~\text{s},
+  \label{eq:impl-speed}
+\end{equation}
+where $\tilde{\mathbf{p}}_k$ is the smoothed position. 
+
+\paragraph{Zoning and movements.} Polygons were drawn for each approach, each exit and each slip
+lane, together with stop-line segments. The entry and exit polygons crossed by a track define its
+turning movement (left via slip lane, through, right or U-turn).
+
+\paragraph{Waiting time and delay.} As in \sumo{}, a vehicle is waiting in any sample where its speed is
+below 0.1~m/s while it is inside an approach zone $\mathcal{Z}$. The waiting time of vehicle $i$ is
+\begin{equation}
+  W_i = \sum_{k} \Delta t \cdot \mathbb{1}\!\left[ v_k < 0.1~\text{m/s} \;\wedge\; \tilde{\mathbf{p}}_k \in \mathcal{Z} \right],
+  \label{eq:impl-wait}
+\end{equation}
+and its control delay is
+\begin{equation}
+  d_i = T_{\text{frame},i} - \frac{L_{\text{path},i}}{v_{\text{free}}},
+  \label{eq:impl-delay}
+\end{equation}
+where $T_{\text{frame},i}$ is the time spent in the field of view, $L_{\text{path},i}$ the length of the
+smoothed path and $v_{\text{free}}$ the observed free-flow speed of \est{38~km/h}. Tracks that were
+already present when the video began, or still present when it ended, are \emph{censored}: they were counted in flows but excluded from averages.
+
+\paragraph{Derived quantities.} Flows per approach and class were aggregated into 5-minute bins in
+vehicles per hour and in Passenger Car Units (PCU) per hour,  with turning ratios and queue lengths. Saturation flow was estimated from queue-discharge headways
+at the start of green, ignoring the first three vehicles
+\cite{hcm2016}. Expressed per PCU,
+\begin{equation}
+  s = 3600 \cdot \frac{\sum_{j\geq4} \text{PCU}_j}{\sum_{j\geq4} h_j},
+  \label{eq:impl-satflow}
+\end{equation}
+where $h_j$ is the stop-line headway of the $j$-th discharging vehicle. Pooled over both sessions this
+gave \est{1850~PCU/h/lane}.
+
+\paragraph{Output.} Finally, \dtx{} wrote a \sumo{} route file (a vehicle-type distribution per session
+and one \texttt{<flow>} per movement per 5-minute bin) and a comma-separated values (CSV) file of
+observed key performance indicators (KPIs) for calibration. In the morning the observed demand
+was \est{3,420~veh/h}, or \est{3,150~PCU/h}, and in the afternoon it was \est{2,280~veh/h}, or
+\est{2,085~PCU/h}. The observed average waiting times under the existing fixed-time plan were
+\est{104.7~s} and \est{46.3~s} respectively.
+
+\begin{algorithm}[htbp]
+\DontPrintSemicolon
+\KwIn{video $V$ (30 fps), zone polygons $\mathcal{Z}$, control points, model weights}
+\KwOut{trajectory table $\mathcal{T}$, route file \texttt{.rou.xml}, observed-KPI CSV}
+$F_0 \gets$ reference frame; $\mathcal{T} \gets \emptyset$\;
+\ForEach{frame $F_t$ of $V$ sampled at 10 fps}{
+  $\mathbf{H}_t \gets$ \textsc{RANSAC}(\textsc{ORBMatch}$(F_t, F_0)$); $\hat F_t \gets$ \textsc{Warp}$(F_t, \mathbf{H}_t)$\;
+  $D_t \gets$ \textsc{SAHI}(YOLOv8s, $\hat F_t$, tiles $2\times2$, overlap 0.2)\;
+  $\mathcal{T} \gets$ \textsc{ByteTrack}$(\mathcal{T}, D_t)$\;
+}
+\ForEach{track $\tau \in \mathcal{T}$}{
+  class$(\tau) \gets$ majority vote of per-frame classes\;
+  map pixels to metres with $\mathbf{G}$ (\cref{eq:impl-homography}); smooth (Savitzky--Golay 11/2)\;
+  compute $v_k$ (\cref{eq:impl-speed}), $W_\tau$ (\cref{eq:impl-wait}) and $d_\tau$ (\cref{eq:impl-delay})\;
+  movement$(\tau) \gets$ (entry zone, exit zone)\;
+  \lIf{$\tau$ touches the video start or end}{mark $\tau$ censored}
+}
+aggregate flows (veh/h, PCU/h) per approach, class and 5-min bin; turning ratios; queues\;
+$s \gets$ \cref{eq:impl-satflow} over discharge headways of 4th and later vehicles\;
+write \texttt{vTypeDistribution} and \texttt{<flow>} elements; write KPI CSV (uncensored averages)\;
+\caption{\dtx{} drone trajectory extraction}\label{alg:dtx}
+\end{algorithm}
+
+\subsection{SUMO network and demand}\label{sec:impl-sumo}
+
+The network was taken from OpenStreetMap (OSM)~\cite{haklay2008osm} as an Overpass extract covering the two
+roads and the four slip links within 500~m of \ang{6.80133} N, \ang{79.93502} E, and converted with
+\texttt{netconvert --lefthand} because Sri Lanka drives on the left. The geometry needed correcting in several
+places, but the corrections were \emph{not} made by hand in \texttt{netedit}: each one is recorded as a
+\texttt{netconvert} patch file (edge type overrides, connection definitions and the traffic-light program), so
+a single script rebuilds the network identically from the extract. This matters for reproducibility (NFR05),
+because a hand-edited \texttt{.net.xml} cannot be regenerated once the source data change. All side streets in
+the extract were deleted; only the bypass, the cross road and the four slip links are modelled, since the side
+streets carry negligible flow and are not signalised. The four arms are numbered clockwise from the northern
+bypass arm as Bypass~1 (B1), Cross~1 (X1), Bypass~2 (B2) and Cross~2 (X2); Bypass~1 is therefore the northern
+bypass arm, and this numbering is used throughout the thesis and in every output file.
+
+Each arm has two entry and two exit lanes; the kerb lane carries through traffic
+and the offside lane carries through and right-turning traffic. Each corner's channelised left-turn
+slip lane was modelled as a separate edge that merges into the exit arm through an unsignalised
+\emph{yield} link. The slip lanes are therefore not part of the Traffic Light System (TLS) program and
+are ignored by the controller except as downstream exit occupancy. The central node is a
+\texttt{traffic\_light} junction with the custom four-phase program of \cref{app:phases}: $\phi_1$
+bypass through, $\phi_2$ bypass protected right, $\phi_3$ cross-road through and $\phi_4$ cross-road
+protected right, each serving both opposing directions and each followed by 3~s amber and 2~s all-red.
+
+Heterogeneous traffic was represented with the sublane model~\cite{sumo_sublane} at a lateral
+resolution of 0.8~m. Motorcycles were given a high \texttt{lcSublane} eagerness and
+\texttt{minGapLat} of 0.3~m so that they filter between queued cars to the stop line, which is the
+dominant behaviour at Maviththara. Longitudinal motion used the Krauss model~\cite{krauss1998} with
+driver imperfection $\sigma = 0.5$ and reaction time $\tau = 1.0$~s, and lateral decisions used the
+model of Erdmann~\cite{erdmann2015lanechange}. A custom \texttt{threewheeler} type was created because
+\sumo{} has no such class. The vehicle types are listed in \cref{tab:impl-vtypes}; the PCU values are
+adopted values for urban mixed traffic~\cite{irc106}.
+
+The \emph{height} column was set explicitly rather than left at \sumo{}'s defaults, because the occlusion rule
+of the \vls{} (\cref{sec:impl-vls}) treats any vehicle at least 2.5~m tall as an occluder, on the reasoning that
+only buses and lorries block the sensor's line of sight. \sumo{}'s defaults contradict that rule: a
+\texttt{delivery} van defaults to 2.86~m and a \texttt{truck} to 2.4~m, so with the defaults every van would
+occlude and no lorry would. The values in \cref{tab:impl-vtypes} are typical kerb heights for the Sri Lankan
+fleet and place exactly the buses and lorries above the threshold.
+
+\begin{table}[htbp]
+\centering
+\caption{\sumo{} vehicle types used for Sri Lankan mixed traffic}\label{tab:impl-vtypes}
+\small
+\begin{tabular}{@{}llrrrrrr@{}}
+\toprule
+Class & vClass & Len.\ (m) & Ht.\ (m) & PCU & Max (km/h) & Accel.\ (m/s$^2$) & Share M/A (\%)\\
+\midrule
+Motorcycle & \texttt{motorcycle} & 2.0 & 1.5 & 0.5 & 70 & 2.8 & \est{38} / \est{34}\\
+Three-wheeler & \texttt{passenger}$^{*}$ & 2.7 & 1.7 & 0.8 & 50 & 1.8 & \est{24} / \est{27}\\
+Car & \texttt{passenger} & 4.5 & 1.5 & 1.0 & 70 & 2.6 & \est{21} / \est{22}\\
+Van/SUV & \texttt{delivery} & 5.0 & 2.0 & 1.0 & 70 & 2.6 & \est{7} / \est{8}\\
+Bus & \texttt{bus} & 11.5 & 3.4 & 3.0 & 60 & 1.2 & \est{6} / \est{5}\\
+Lorry & \texttt{truck} & 8.5 & 3.5 & 2.5 & 55 & 1.3 & \est{3} / \est{3}\\
+Bicycle & \texttt{bicycle} & 1.8 & 1.7 & 0.3 & 20 & 1.2 & \est{1} / \est{1}\\
+\bottomrule
+\multicolumn{8}{@{}l}{\footnotesize $^{*}$Custom type \texttt{threewheeler} (width 1.4~m). M/A = morning/afternoon.}
+\end{tabular}
+\end{table}
+
+Demand for every experiment is written by a \emph{scenario generator} parameterised from the \dtx{} outputs.
+Two scripts make up the generator. \texttt{sumo/gen\_mock\_routes.py} writes the three balanced scenarios, with
+equal demand on every approach at 300, 500 and 700~veh/h; these are the scenarios on which the components were
+developed, unit-tested and tuned. \texttt{sumo/gen\_scenario\_routes.py} writes the seven situations that the
+drone survey showed make the fixed plan inefficient, listed in \cref{tab:impl-scenarios}. Every scenario shares
+the turning shares of 25\% left, 50\% through and 25\% right and the composition of 40\% motorcycles, 20\%
+three-wheelers, 25\% cars, 7\% vans, 5\% buses and 3\% lorries, which averages 0.905~PCU per vehicle, and in
+every scenario vehicles are released as a Poisson process at the stated rate, so that the ten seeds of a
+scenario differ in arrival realisation but not in expected demand. Shares and composition come from the
+footage; the ten scenarios are therefore demand conditions observed at or derived from the junction, and the
+generator exists so that each condition can be replayed identically under every controller.
+
+\begin{table}[htbp]
+\centering
+\caption{The seven situation scenarios written by \texttt{gen\_scenario\_routes.py}, in addition to the three
+balanced scenarios at 300, 500 and 700~veh/h per approach}\label{tab:impl-scenarios}
+\small
+\begin{tabularx}{\textwidth}{@{}llX@{}}
+\toprule
+ID & Name & Demand\\
+\midrule
+sc1 & Empty side road & Bypass 650~veh/h; X1 40~veh/h; X2 0~veh/h\\
+sc2 & Unbalanced roads & Bypass 700~veh/h; cross road 250~veh/h\\
+sc3 & Peak & 250 $\rightarrow$ 750 $\rightarrow$ 250~veh/h in 10-minute blocks\\
+sc4 & Platoon surge & 400~veh/h throughout, plus 1,500~veh/h on X1 for 5~minutes\\
+sc5 & Night & 80~veh/h on every approach\\
+sc6 & Heavy vehicles & 450~veh/h with 30\% buses and lorries\\
+sc7 & Sensor failure & 500~veh/h with LiDAR outages at 1,200--1,500~s and 2,400--2,460~s\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Simulations used a step length of 0.5~s, a controller decision every 1~s, a 300~s
+warm-up that was discarded and 3,600~s of measurement, with tuning seeds 1--5 and evaluation seeds
+6--15. Trip information, summary, queue and emission outputs (HBEFA4~\cite{hbefa41}) were recorded.
+The calibration of \texttt{sigma}, \texttt{tau}, \texttt{minGap}, \texttt{lcSublane} and the speed
+factor distribution against the observed counts and waiting times is reported in
+\cref{sec:eval-calibration}.
+
+\paragraph{Software environment.} \sumo{} \est{1.20.0} is run inside an Ubuntu 24.04 virtual machine hosted by
+OrbStack on the author's Mac, rather than natively, because the published macOS binaries no longer run on the
+current version of macOS. The virtual machine also fixes the \sumo{} build for the whole experiment campaign,
+which removes a source of irreproducibility between runs made weeks apart.
+
+\subsection{Virtual LiDAR Sensor (VLS)}\label{sec:impl-vls}
+
+The \vls{} reproduces the output of a 360\textdegree{} unit,
+comparable to a 32-channel Ouster OS1-32~\cite{ouster_os1}, mounted on a 6~m pole at the junction centre. Rather than simulating individual laser returns, \vls{} works at the \emph{object-list} level produced by roadside LiDAR perception software~\cite{zhao2019lidar,lv2019lidar}. Every second it queries all vehicles
+through the Traffic Control Interface (TraCI)~\cite{wegener2008traci}, keeps those within
+$R = 75$~m and applies the error model below (\cref{alg:vls}).
+
+Each vehicle is represented by the centre of its bounding rectangle. This conversion is necessary because
+TraCI reports a vehicle's position at the \emph{front bumper}, whereas a LiDAR perception stack reports the
+centroid of the cluster it detects; using the bumper position unchanged would displace every object forward by
+half its length, which is 5.75~m for a bus and would corrupt both the range and the distance to the stop line.
+The rectangle is also what gives the object its angular extent: the azimuth span $[\alpha_i^-,\alpha_i^+]$ used
+in \cref{eq:impl-occlusion} is the smallest interval containing the bearings of the rectangle's four corners,
+so a bus seen broadside occludes a wide arc and the same bus seen end-on occludes a narrow one.
+
+Position noise grows with range $r$:
+\begin{equation}
+  \hat{\mathbf{p}} = \mathbf{p} + \boldsymbol{\eta}, \qquad
+  \boldsymbol{\eta} \sim \mathcal{N}\!\left(\mathbf{0}, \sigma(r)^2\mathbf{I}\right), \qquad
+  \sigma(r) = 0.10 + 0.002\,r~\text{m}.
+  \label{eq:impl-noise}
+\end{equation}
+Each object is independently missed with probability
+\begin{equation}
+  p_{\text{miss}}(r) = 0.01 + 0.04\left(\frac{r}{R}\right)^{2},
+  \label{eq:impl-dropout}
+\end{equation}
+which reflects the thinning of beams with distance. Occlusion is computed by ray casting in the
+horizontal plane. Let the interval $[\alpha_i^-, \alpha_i^+]$ be the azimuth range that object $i$
+subtends at the sensor. Object $i$ is hidden if a nearer object $j$ that is at least 2.5~m tall
+(a bus or lorry) satisfies
+\begin{equation}
+  \frac{\big|[\alpha_i^-, \alpha_i^+] \cap [\alpha_j^-, \alpha_j^+]\big|}{\alpha_i^+ - \alpha_i^-} \;\geq\; 0.7 .
+  \label{eq:impl-occlusion}
+\end{equation}
+ Clutter is
+added as $N_c \sim \text{Poisson}(\lambda = 0.2)$ false objects per scan at uniformly random positions
+within range.
+
+A real LiDAR does not know vehicle classes, so \vls{} reports only a \emph{size class} derived from the
+measured length: \emph{small} below 3.2~m (motorcycles, bicycles and three-wheelers) mapped to
+0.6~PCU, \emph{medium} from 3.2 to 6~m (cars and vans) mapped to 1.0~PCU, and \emph{large} above
+6~m (buses and lorries) mapped to 2.8~PCU.  The small and large values are demand-weighted compromises between the classes they contain. The controller never sees the true class.
+
+Raw detections then pass through a perception tracker that associates each detection with the nearest
+predicted track within a 2.5~m gate and filters it with an $\alpha$--$\beta$ filter:
+\begin{align}
+  \hat{\mathbf{p}}^{-}_{k} &= \hat{\mathbf{p}}_{k-1} + \hat{\mathbf{v}}_{k-1}\,\Delta t, \label{eq:impl-ab1}\\
+  \hat{\mathbf{p}}_{k} &= \hat{\mathbf{p}}^{-}_{k} + \alpha\,(\mathbf{z}_k - \hat{\mathbf{p}}^{-}_{k}), \label{eq:impl-ab2}\\
+  \hat{\mathbf{v}}_{k} &= \hat{\mathbf{v}}_{k-1} + \frac{\beta}{\Delta t}\,(\mathbf{z}_k - \hat{\mathbf{p}}^{-}_{k}), \label{eq:impl-ab3}
+\end{align}
+with $\alpha = 0.5$, $\beta = 0.1$ and $\Delta t = 1$~s.
+
+\paragraph{Track initiation.} A new detection starts a \emph{tentative} track with unknown velocity. Its
+second detection is associated using a wider \emph{initiation gate} of $v_{\max}\Delta t \approx 20$~m rather
+than the steady-state 2.5~m gate, and the two positions set the initial velocity directly,
+$\hat{\mathbf{v}} = (\mathbf{z}_2 - \mathbf{z}_1)/\Delta t$. Only from the third scan onwards does the track
+use the 2.5~m gate and the $\alpha$--$\beta$ filter of
+\cref{eq:impl-ab1,eq:impl-ab2,eq:impl-ab3}. The wider gate is not a detail. A tentative track initialised with
+$\hat{\mathbf{v}} = \mathbf{0}$ predicts that the vehicle has not moved, so with a 2.5~m gate and a 1~s scan
+period no vehicle travelling faster than 2.5~m/s, or 9~km/h, can ever be associated with its own second
+detection and confirmed. Measured on the balanced 500~veh/h scenario, the original single-gate scheme
+confirmed only \est{21\%} of moving vehicles; two-point initiation removes the speed ceiling, because the
+gate now spans the furthest a vehicle could legally travel between scans. A track is deleted after three
+consecutive misses, which suppresses most single-scan clutter.
+
+\paragraph{Coasting tracks.} Only tracks that were updated by a detection in the current scan are reported to
+the controller. A track that was not associated this scan is still propagated internally by
+\cref{eq:impl-ab1}, so that it survives a short dropout and can be re-associated, but it is withheld from the
+object list. Reporting coasting tracks was found to be actively harmful: they made up \est{30\%} of the object
+list, and \est{84\%} of those were more than 2.5~m from any real vehicle, so the controller was counting
+queue that had already discharged. Withholding them costs nothing, because a vehicle missed in one scan is
+almost always detected in the next and rejoins the list with its position corrected.
+
+\paragraph{Map matching.} Reported tracks are matched to the network by point-in-polygon tests against lane
+polygons. A track inside an approach-lane polygon within 75~m of the stop line yields an approach, a lane and
+a distance to the stop line measured along the road. A track inside an exit-lane polygon yields the exit link
+it occupies, which feeds the downstream occupancy term. Tracks in the junction box itself, on the unsignalised
+slip lanes, or further than 75~m along an arm match nothing and are discarded, since the controller has no
+state in which to place them.
+
+One feature of the OSM geometry had to be handled explicitly. OSM splits every arm at an intermediate node 8
+to 17~m short of the stop line, where the carriageway widens for the slip lane. \sumo{} inserts an internal
+lane across that node, and an internal lane belongs to no edge, so a vehicle standing on it matched no
+approach polygon at all. The lane polygons therefore include a \emph{connector} spanning the internal lane,
+and distance along the road is measured through the connector as well as the two edges it joins. Without this,
+the controller saw only \est{27--31\%} of the stopped vehicles on the B1 and X1 approaches, precisely the
+vehicles nearest the stop line and so precisely those whose queue matters most.
+
+\paragraph{Effective queue range.} The 75~m radius is centred on the sensor at the junction centre, not on the
+stop lines, and the stop lines lie 13 to 16~m from the centre. The sensor therefore observes queues to roughly
+\textbf{60~m} back from the stop line, not 75~m. Two statements elsewhere in the original specification assumed
+the larger figure and are corrected accordingly: the queue term $Q_m$ of \cref{sec:impl-prism} counts objects
+within the \emph{observable} range rather than ``within 75~m of the stop line'', and the exit capacity
+$C_b = 2 \times 75/6.5 \approx 23$~PCU is similarly optimistic, since the exit links are observable over the
+same shorter distance. This is the limitation that motivates the hidden-queue state of \cref{sec:impl-prism}.
+
+\paragraph{Randomness.} The \vls{} draws its noise, dropout and clutter from its own random generator, seeded
+with the run seed and separate from \sumo{}'s, so that sensor realisations are reproducible and independent of
+how many random numbers the traffic model happens to consume. For the dropout sweep of
+\cref{sec:eval-sensitivity} the range-dependent $p_{\text{miss}}(r)$ of \cref{eq:impl-dropout} is replaced by a
+uniform miss probability applied to every object regardless of range, so that the swept quantity is a single
+interpretable number.
+
+This list is the only input to \prism{}, so a real sensor could replace it unchanged.
+
+\begin{algorithm}[htbp]
+\DontPrintSemicolon
+\KwIn{ground-truth vehicles $\mathcal{V}$ from TraCI, perception tracks $\mathcal{K}$}
+\KwOut{object list $\mathcal{O}$ for the controller}
+$\mathbf{p}_i \gets$ rectangle centre of $i$ (TraCI reports the front bumper)\;
+$\mathcal{D} \gets \{ i \in \mathcal{V} : r_i \leq R \}$\;
+\ForEach{$i \in \mathcal{D}$ in increasing range}{
+  $[\alpha_i^-,\alpha_i^+] \gets$ azimuth span of the four corners of $i$'s rectangle\;
+  \lIf{$\exists j : h_j \geq 2.5~\text{m},\, r_j < r_i$, overlap $\geq 0.7$ (\cref{eq:impl-occlusion})}{remove $i$; \textbf{continue}}
+  \lIf{$U(0,1) < p_{\text{miss}}(r_i)$}{remove $i$; \textbf{continue}}
+  $\hat{\mathbf{p}}_i \gets \mathbf{p}_i + \mathcal{N}(\mathbf{0}, \sigma(r_i)^2\mathbf{I})$; size class and PCU from length\;
+}
+add $N_c \sim \text{Poisson}(0.2)$ clutter objects uniformly within $R$\;
+\ForEach{tentative track with one hit}{associate within the initiation gate $v_{\max}\Delta t \approx 20$~m; set $\hat{\mathbf{v}} \gets (\mathbf{z}_2 - \mathbf{z}_1)/\Delta t$}
+associate remaining detections to $\mathcal{K}$ by nearest neighbour (gate 2.5~m); update with \cref{eq:impl-ab1,eq:impl-ab2,eq:impl-ab3}\;
+coast unassociated tracks by \cref{eq:impl-ab1} but do \emph{not} report them; delete after 3 misses\;
+$\mathcal{O} \gets$ tracks updated this scan, map-matched to approach, lane and $d_{\text{stop}}$ through the intermediate-node connectors; junction box, slip lanes and anything beyond 75~m match nothing\;
+\caption{\vls{} scan and perception}\label{alg:vls}
+\end{algorithm}
+
+\subsection{PRISM control algorithm (PRISM-R)}\label{sec:impl-prism}
+
+\prism{} belongs to the max-pressure family~\cite{varaiya2013maxpressure,tassiulas1992} but was adapted
+to three realities of the Maviththara junction: vehicles differ greatly in size, a starved approach is
+socially unacceptable even if it is theoretically optimal, and the sensor is imperfect.  It contains no learned component.
+
+The law as first specified did not work. On its first evaluation it lost to the existing fixed-time plan at
+both 500 and 700~veh/h, and the loss at 700 was severe. Rather than retune the parameters, the author
+instrumented the decision log and diagnosed five distinct causes, each of which is a modelling error rather
+than a bad constant:
+
+\begin{enumerate}[leftmargin=*,itemsep=2pt]
+  \item \textbf{The map-matching gap.} Vehicles standing on the internal lane at the intermediate OSM node,
+        nearest the stop line, matched no approach, so the controller saw only \est{27--31\%} of the stopped
+        vehicles on B1 and X1 (\cref{sec:impl-vls}). It was optimising against a queue that was mostly
+        invisible.
+  \item \textbf{$G_{\text{req}}$ recomputed every second.} \Cref{eq:greq} was evaluated at each decision step
+        from the queue \emph{currently} present. As the green discharged the queue, $G_{\text{req}}$ shrank
+        with it, so the condition $t_g \geq \rho\,G_{\text{req}}$ became satisfiable almost immediately. Greens
+        ended after about \est{11~s} and the controller made roughly \est{250} phase changes an hour, each
+        paying 5~s of intergreen: about 21~minutes of every hour was spent clearing the junction.
+  \item \textbf{The 60~m horizon.} Because the sensor sees roughly 60~m back from the stop line, a queue that
+        is longer than that reports a constant value, and the controller cannot distinguish a queue of 60~m
+        from one of 250~m. At 700~veh/h this is the normal condition, so the pressure signal saturated exactly
+        when it was needed.
+  \item \textbf{Right-turn starvation.} Under acyclic arg-max selection a protected right turn, which serves
+        at most a quarter of the flow of the through phase beside it, is almost never the strongest phase. It
+        was served only when the starvation override fired at 120~s, and the resulting right-turn queues then
+        blocked the offside lane and degraded the through movement as well.
+  \item \textbf{Occlusion in heavy traffic.} A stopped vehicle hidden behind a bus simply vanished from the
+        object list, so its PCU left the queue estimate although the vehicle had not moved.
+\end{enumerate}
+
+The revisions described in the remainder of this section address these five causes. Every revision is
+implemented as a parameter rather than as a rewrite, so the original formulation can still be executed on
+identical sensing as an ablation, referred to throughout \cref{ch:eval} as ``\prism{}, thesis law''. The
+revised controller is denoted \prism{}-R, and wherever the two differ the text says which is meant.
+
+\subsubsection{State}
+
+A \emph{movement} $m$ is a pair (approach, through or right). Left turns use the slip lanes and are
+not controlled. With the lane assumption stated in \cref{sec:impl-sumo}, the controller computes for
+each movement:
+\begin{itemize}[noitemsep]
+  \item $Q_m$, the queued PCU: the sum of PCU of objects in $m$'s lanes with $v < 1.4$~m/s within the
+        observable range of the approach, which is about 60~m from the stop line (\cref{sec:impl-vls}).
+        Offside-lane objects are split between through and right, because the sensor cannot know a stationary
+        vehicle's intention;
+  \item $A_m$, the arriving PCU: the sum of PCU of moving objects whose estimated time of
+        arrival (ETA) $d_{\text{stop}}/v$ is at most $H = 10$~s;
+  \item $O_b$, the PCU occupancy of exit link $b$, whose nominal capacity is $C_b \approx 23$~PCU
+        ($2 \times 75~\text{m} / 6.5~\text{m}$ per PCU). This figure shares the optimism noted in
+        \cref{sec:impl-vls}, since the exit is observable over roughly 60~m rather than 75~m; it is retained
+        because the spillback guard compares a ratio against a fixed threshold, so a consistently scaled
+        capacity shifts only where that threshold sits.
+\end{itemize}
+For each phase $\phi$, $R_\phi$ is the time since $\phi$ last had green. \prism{}-R adds three further state
+elements.
+
+\paragraph{Offside-lane split.} The offside lane carries both through and right-turning traffic, and the
+kerb lane carries only through traffic. Splitting an offside-lane object by the raw turning shares is
+therefore wrong, because it ignores the fact that part of the through traffic is not in that lane at all. If
+$T$ and $R$ are the through and right turning shares and a fraction $f_k = $ \est{0.75} of through traffic uses
+the kerb lane, the share of offside-lane traffic that is turning right is
+\begin{equation}
+  \pi_R = \frac{R}{R + (1 - f_k)\,T},
+  \label{eq:impl-offside}
+\end{equation}
+which for the observed shares gives \est{0.667} rather than the 0.33 that the raw shares would suggest. A
+stationary offside-lane object contributes $\pi_R$ of its PCU to the right movement and $1-\pi_R$ to the
+through movement.
+
+\paragraph{Hidden queue.} While a movement's visible queue reaches the edge of the sensor range, that is,
+while some stopped object of the movement lies at least 50~m back, the controller can no longer measure the
+queue and must instead account for it. Arrivals at the learnt rate $\lambda_m$ are accumulated into a
+\emph{hidden queue} $Q^{\text{hid}}_m$, where $\lambda_m$ is an exponentially weighted moving average, with
+time constant $\tau_\lambda = 120$~s, of the rate at which tracks enter the range beyond 45~m. A track that
+enters the observable range is removed from the hidden queue, so the same vehicle is never counted twice. The
+hidden queue is capped at 60~PCU, which is roughly the standing capacity of an approach beyond the sensor, and
+is cleared entirely whenever every object of the movement is nearer than 30~m, since the queue has then
+demonstrably dissipated. It is added to $Q_m$ in proportion to $T$ and $R$. This is the device discussed in
+\cref{sec:lit-algorithms}: it makes the state degrade conservatively, rather than silently, at the range edge.
+
+\paragraph{Occlusion persistence.} A stopped object on an approach that disappears from the object list
+without ever having been seen moving is held in the state, at its last position, for a further 5~s. A vehicle
+that stops behind a bus does not cease to occupy road space, and the alternative, deleting it immediately, was
+what allowed heavy-vehicle traffic to erase its own queue from the estimate. Five seconds is short enough that
+a vehicle which genuinely departed during an occlusion is forgotten within one or two decisions.
+
+\subsubsection{Equations}
+
+The movement pressure is
+\begin{equation}
+  p_m = Q_m + \gamma A_m - \delta\, O_{\text{exit}(m)}, \qquad \gamma = 0.5,\; \delta = 0.6.
+  \label{eq:pressure}
+\end{equation}
+The terms are the upstream queue, the platoon about to arrive and the downstream penalty that discourages feeding a congested exit
+\cite{gregoire2015capacity}. Phase pressure aggregates its movements:
+\begin{equation}
+  P_\phi = \sum_{m \in \phi} p_m .
+  \label{eq:phase-pressure}
+\end{equation}
+To encode fairness, each phase receives an urgency multiplier that grows with the square of its red
+time,
+\begin{equation}
+  U_\phi = 1 + \kappa \left( \frac{R_\phi}{T_{\text{starve}}} \right)^{2}, \qquad \kappa = 1.5,
+  \label{eq:urgency}
+\end{equation}
+so that urgency is negligible for short reds but reaches $1+\kappa = 2.5$ at the starvation cap. The
+phase score is
+\begin{equation}
+  S_\phi = \max(P_\phi, 0)\cdot U_\phi .
+  \label{eq:score}
+\end{equation}
+Clipping at zero stops an empty phase being promoted. The green time required to discharge the current demand is estimated as
+\begin{equation}
+  G_{\text{req}}(\phi) = \operatorname{clip}\!\left( l_s + h_s \cdot
+  \frac{\sum_{m \in \phi} (Q_m + \gamma A_m)}{n_{\text{lanes}}(\phi)},\; G_{\min}(\phi),\; G_{\max}(\phi) \right),
+  \label{eq:greq}
+\end{equation}
+with start-up lost time $l_s = 2.0$~s, saturation headway $h_s = 3600/1850 \approx 1.95$~s/PCU and
+$n_{\text{lanes}}(\phi)$ the number of approach lanes discharging during $\phi$ (four for a through
+phase, two for a right-turn phase).
+
+\Cref{eq:pressure,eq:phase-pressure,eq:urgency,eq:score} are unchanged in \prism{}-R. \Cref{eq:greq} is
+amended in two ways, which between them fix causes~2 and~3 of the diagnosis.
+
+\paragraph{Range-edge blend.} If any movement of the phase has a queue that reaches the edge of the sensor
+range, the required green cannot be computed from the visible queue, because that queue is a lower bound of
+unknown slackness. The estimate is then blended halfway towards the maximum,
+\begin{equation}
+  G_{\text{req}} \leftarrow G_{\text{req}} + \eta\,\bigl(G_{\max}(\phi) - G_{\text{req}}\bigr),
+  \qquad \eta = 0.5,
+  \label{eq:impl-edgeblend}
+\end{equation}
+so that a saturated approach is given roughly the green it would need if the queue continued beyond what can
+be seen. Blending rather than jumping to $G_{\max}$ keeps the controller responsive if the queue turns out to
+be short.
+
+\paragraph{Frozen target.} $G_{\text{req}}(\phi)$ is evaluated \emph{once}, at the instant the green of
+$\phi$ begins, and held constant for the whole of that green. The original specification recomputed it at
+every decision step, which made the target chase the shrinking queue it was meant to discharge and produced
+the 11~s greens described above. Freezing it restores the intended meaning of the quantity: the green needed
+to clear the queue that was present when the green started.
+
+\subsubsection{Decision loop}
+
+Every $\Delta = 1$~s during the green of phase $g$ with elapsed green $t_g$, the controller evaluates
+seven rules in order and acts on the first that fires. Say that a phase \emph{can discharge} if it has at
+least one queued or arriving PCU on a movement whose exit is not spilling back.
+\begin{enumerate}[noitemsep]
+  \item \textbf{Minimum green.} If $t_g < G_{\min}(g)$, extend.
+  \item \textbf{Spillback or max-out.} If an exit fed by $g$ has $O_b/C_b > 0.85$, terminate. Terminate also
+        if $t_g \geq G_{\max}(g)$, but \emph{only} while some other phase is waiting: a green that has reached
+        its maximum with nothing else to serve is not worth the 5~s of intergreen it would cost to end.
+  \item \textbf{Starvation.} If any other phase $\phi$ has $R_\phi \geq T_{\text{starve}}$ and is waiting,
+        terminate. ``Waiting'' means any queued or arriving PCU, $Q_\phi + A_\phi > 0$, rather than the
+        original $P_\phi > 0$: a phase whose pressure is driven negative by a congested exit is still waiting,
+        and under the original test it could be passed over indefinitely. A phase whose own exit is spilling
+        back is \emph{not} forced in by this rule, since releasing traffic into a blocked exit helps no one.
+  \item \textbf{Rest in red.} If no approach anywhere at the junction is occupied, terminate and rest in
+        all-red. The first vehicle subsequently detected on any arm receives its green directly from all-red,
+        so it waits only the clearance interval instead of finding the green committed to an empty approach.
+  \item \textbf{Rest in green.} If no other phase can discharge, extend. There is nothing to be gained by
+        taking the green away from the only movement able to use it.
+  \item \textbf{Gap-out.} If $\sum_{m\in g} Q_m \leq 0.5$~PCU and no object of $g$ has ETA
+        $\leq \tau_{\text{gap}} = 3$~s, terminate.
+  \item \textbf{Pressure switch.} If $\max_{\phi \neq g} S_\phi > (1+\theta) S_g + \varepsilon$ for a phase
+        that can discharge, with $\theta = 0.10$ and $\varepsilon = 2$~PCU, and $t_g \geq \rho\,
+        G_{\text{req}}(g)$ with $\rho = 1.0$ evaluated against the frozen target, terminate.
+\end{enumerate}
+If no rule fires, the green is extended by 1~s.
+
+On termination, 3~s amber and 2~s all-red follow. At the end of the all-red the next phase is chosen. Starved
+phases are served first, oldest first. Otherwise selection is \emph{cyclic with skipping}: the controller
+takes the first phase after $g$ in the fixed order $\phi_1 \rightarrow \phi_2 \rightarrow \phi_3 \rightarrow
+\phi_4$ that can discharge, passing over any phase with nothing to serve. If no phase can discharge, the
+strongest phase by $S_\phi$ is chosen. This replaces the acyclic arg-max of the original specification and
+follows the cyclic max-pressure construction of Levin, Hu and
+Odell~\cite{levin2020cyclic,le2015decentralized}: it guarantees a protected right turn its turn whenever it
+has demand, which the arg-max never did, while the skip rule prevents the fixed order from degenerating into
+a fixed-time plan.
+
+Two further behaviours, left unspecified in the original design, were settled during the revision. A
+\emph{short sensor gap} of one to four scans holds the current green rather than taking any decision, because
+a single missed scan is far more likely than a junction that has emptied instantaneously. Entry to the
+\emph{fail-safe} is not instantaneous either: the controller runs the normal 3~s amber and 2~s all-red before
+handing over, and the fixed plan then starts at the beginning of its $\phi_1$, so that drivers see a lawful
+transition and a familiar plan from its natural start. Recovery is likewise deferred until B1 is again at the
+start of $\phi_1$, which prevents the adaptive law from resuming mid-cycle.
+
+Two guards complete the design. The \emph{spillback guard} applies when any exit has
+$O_b/C_b > 0.85$: every phase feeding $b$ has its effective maximum green reduced to $G_{\min}$, keeping vehicles out of a blocked junction box. The \emph{fail-safe} switches to the observed 78~s fixed-time plan
+(B1) when the \vls{} delivers no data for five consecutive scans, and \prism{} resumes at the next
+cycle boundary once ten consecutive valid scans have been received.  The complete logic is given in \cref{alg:prism} and
+\cref{fig:impl-prism-flow}.
+
+\begin{algorithm}[htbp]
+\DontPrintSemicolon
+\SetKwFunction{Decide}{Decide}\SetKwProg{Fn}{Function}{:}{}
+\KwIn{object list $\mathcal{O}$, current green $g$, elapsed $t_g$, red timers $R_\phi$}
+\KwOut{action $\in$ \{\textsc{Extend}, \textsc{Terminate}\} and a logged reason}
+\Fn{\Decide{$\mathcal{O}, g, t_g$}}{
+  \lIf{$\mathcal{O}$ missing for 1--4 consecutive scans}{\Return (\textsc{Extend}, ``sensor gap'')}
+  \lIf{$\mathcal{O}$ missing for 5 consecutive scans}{\Return \textsc{FailSafe}(amber, all-red, B1 plan from $\phi_1$)}
+  update hidden queues and held occluded objects; compute $Q_m, A_m, O_b$ from $\mathcal{O}$ with the offside split (\cref{eq:impl-offside})\;
+  $p_m$ (\cref{eq:pressure}); $P_\phi$, $U_\phi$, $S_\phi$ (\cref{eq:phase-pressure,eq:urgency,eq:score}); $G_{\text{req}}(g)$ is the value frozen at the start of this green\;
+  \lIf{$t_g < G_{\min}(g)$}{\Return (\textsc{Extend}, ``min green'')}  \tcp*[h]{R1}
+  \lIf{$g$ feeds an exit with $O_b/C_b>0.85$}{\Return (\textsc{Terminate}, ``spillback'')}  \tcp*[h]{R2}
+  \lIf{$t_g \geq G_{\max}(g)$ \textbf{and} some $\phi \neq g$ is waiting}{\Return (\textsc{Terminate}, ``max out'')}
+  \lIf{$\exists \phi \neq g$ waiting, exit clear, $R_\phi \geq T_{\text{starve}}$}{\Return (\textsc{Terminate}, ``starvation'')}  \tcp*[h]{R3}
+  \lIf{no approach at the junction is occupied}{\Return (\textsc{Terminate}, ``rest in red'')}  \tcp*[h]{R4}
+  \lIf{no $\phi \neq g$ can discharge}{\Return (\textsc{Extend}, ``rest in green'')}  \tcp*[h]{R5}
+  \lIf{$\sum_{m\in g} Q_m \leq 0.5$ and no ETA$_g \leq \tau_{\text{gap}}$}{\Return (\textsc{Terminate}, ``gap out'')}  \tcp*[h]{R6}
+  \If{$\exists \phi \neq g$ that can discharge with $S_\phi > (1+\theta)S_g + \varepsilon$ \textbf{and} $t_g \geq \rho\,G_{\text{req}}(g)$}{
+    \Return (\textsc{Terminate}, ``pressure switch'')}  \tcp*[h]{R7}
+  \Return (\textsc{Extend}, ``extend'')\;
+}
+\BlankLine
+\textbf{On terminate:} amber 3 s; all-red 2 s; recompute $S_\phi$\;
+\uIf{starved phases exist}{$g' \gets$ the starved phase with largest $R_\phi$}
+\uElseIf{some phase can discharge}{$g' \gets$ the first phase after $g$ in $\phi_1\!\to\!\phi_2\!\to\!\phi_3\!\to\!\phi_4$ that can discharge \tcp*[h]{cyclic with skip}}
+\Else{$g' \gets \arg\max_{\phi} S_\phi$, or rest in all-red if the junction is empty}
+start green of $g'$; freeze $G_{\text{req}}(g')$; $R_{g} \gets 0$ at end of $g$'s green; log decision record\;
+\caption{\prism{}-R decision procedure (executed every $\Delta = 1$~s)}\label{alg:prism}
+\end{algorithm}
+
+\begin{figure}[htbp]
+\centering
+\resizebox{!}{0.66\textheight}{%
+\begin{tikzpicture}[
+  node distance=4.5mm and 9mm,
+  box/.style={rectangle, rounded corners=2pt, draw, fill=black!5, align=center, font=\small, minimum width=38mm, minimum height=7mm},
+  dec/.style={diamond, aspect=3.4, draw, align=center, font=\small, inner sep=0.5pt},
+  term/.style={rectangle, rounded corners=7pt, draw, fill=black!12, align=center, font=\small, minimum width=26mm, minimum height=7mm},
+  arr/.style={-{Stealth[length=2mm]}, thick},
+  lab/.style={font=\footnotesize}]
+\node[term] (start) {Every $\Delta=1$ s};
+\node[box, below=of start] (scan) {Read \vls{} object list};
+\node[dec, below=of scan] (fs) {Data missing\\for 5 scans?};
+\node[box, below=of fs] (state) {Update hidden queue, held objects;\\compute $Q_m, A_m, O_b, p_m, P_\phi, U_\phi, S_\phi$;\\$G_{\text{req}}$ frozen at green start};
+\node[dec, below=of state] (gmin) {R1 $t_g < G_{\min}$?};
+\node[dec, below=of gmin] (gmax) {R2 spillback, or $t_g \geq G_{\max}$\\with another phase waiting?};
+\node[dec, below=of gmax] (starve) {R3 other phase starved,\\waiting, exit clear?};
+\node[dec, below=of starve] (rir) {R4 junction empty?\\(rest in red)};
+\node[dec, below=of rir] (rig) {R5 no other phase\\can discharge?};
+\node[dec, below=of rig] (gap) {R6 gap-out?};
+\node[dec, below=of gap] (press) {R7 pressure switch to a phase\\that can discharge?};
+\node[box, below=of press] (ext) {Extend green 1 s};
+\coordinate (bus) at ($(gmax.east)+(26mm,0)$);
+\node[box, right=14mm of fs] (fixed) {Fail-safe: amber, all-red,\\B1 78 s plan from $\phi_1$};
+\node[box, left=10mm of gmin] (cont) {Continue\\green};
+\node[box] (term) at (bus |- ext) {Terminate $g$: amber\\3 s + all-red 2 s};
+\node[box, below=of term] (sel) {Next: oldest starved, else first\\phase after $g$ in $\phi_1\!\to\!\phi_2\!\to\!\phi_3\!\to\!\phi_4$\\that can discharge, else strongest};
+\node[box, below=of ext] (log) {Log decision,\\reason and scores};
+\draw[arr] (start) -- (scan);
+\draw[arr] (scan) -- (fs);
+\draw[arr] (fs) -- node[lab, right] {no} (state);
+\draw[arr] (fs) -- node[lab, above] {yes} (fixed);
+\draw[arr] (state) -- (gmin);
+\draw[arr] (gmin) -- node[lab, right] {no} (gmax);
+\draw[arr] (gmin) -- node[lab, above] {yes} (cont);
+\draw[arr] (gmax) -- node[lab, right] {no} (starve);
+\draw[arr] (starve) -- node[lab, right] {no} (rir);
+\draw[arr] (rir) -- node[lab, right] {no} (rig);
+\draw[arr] (rig) -- node[lab, right] {no} (gap);
+\draw[arr] (gap) -- node[lab, right] {no} (press);
+\draw[arr] (press) -- node[lab, right] {no} (ext);
+\draw[arr] (rig.west) -- node[lab, above] {yes (hold)} ++(-16mm,0) |- (ext.west);
+\draw[thick] (gmax.east) -- node[lab, above] {yes} (bus);
+\draw[thick] (starve.east) -- node[lab, above] {yes} (bus |- starve.east);
+\draw[thick] (rir.east) -- node[lab, above] {yes} (bus |- rir.east);
+\draw[thick] (gap.east) -- node[lab, above] {yes} (bus |- gap.east);
+\draw[thick] (press.east) -- node[lab, above] {yes} (bus |- press.east);
+\draw[arr] (bus) -- (term.north);
+\draw[arr] (term) -- (sel);
+\draw[arr] (ext) -- (log);
+\draw[arr] (sel.west) -- (sel.west -| log.east);
+\draw[arr] (cont.south) |- (log.west);
+\end{tikzpicture}}
+\caption{Flowchart of the \prism{}-R decision procedure, with the seven ordered rules R1--R7 and cyclic
+next-phase selection}\label{fig:impl-prism-flow}
+\end{figure}
+
+\subsubsection{Properties}
+
+\paragraph{Safety.} \prism{} never writes a signal state directly. It selects one of four
+pre-verified green states, and every transition passes through the 3~s amber and 2~s all-red
+states of \cref{app:phases}, so conflicting greens and truncated intergreens are impossible by
+construction. This was also checked by an automated test over every simulated step
+(\cref{app:code}).
+
+\paragraph{Bounded fairness.} Let phase $\phi$ end its green at time $t_0$. It becomes starved at
+$t_0 + T_{\text{starve}}$. From then on, rule~3 terminates any running green at the first decision
+step after that green reaches $G_{\min}$, and the oldest-first rule serves $\phi$ after the following
+5~s intergreen. If another phase became starved earlier, it is served first, but its green is itself
+cut at $G_{\min}$ because $\phi$ is starved. The extra time beyond $T_{\text{starve}}$ therefore
+consists of at most minimum greens and intergreens, which together are always shorter than one
+maximum through green plus one intergreen.
+
+The bound survives the revisions of \prism{}-R because the starvation rule still outranks both resting rules
+and the cyclic order: rest in green (rule~5) and the cyclic selection are consulted only after rule~3 has
+found no starved phase, so neither can hold the green against a phase that has reached $T_{\text{starve}}$.
+The corrected definition of ``waiting'' strengthens the guarantee rather than weakening it, since a phase now
+qualifies on $Q_\phi + A_\phi > 0$ and no longer loses its claim merely because a congested exit has driven
+its pressure negative. The single exception is deliberate: a phase whose own exit is spilling back is not
+forced in, because its vehicles could not discharge in any case, and it reclaims its turn as soon as the exit
+clears. A conservative bound on the red time of any phase is
+\begin{equation}
+  R^{\text{worst}} \leq T_{\text{starve}} + G_{\max} + 5~\text{s} = 120 + 50 + 5 = 175~\text{s},
+  \label{eq:impl-fairness}
+\end{equation}
+using the through-phase $G_{\max}$ of 50~s, which is the longest green any phase can hold. 
+
+\paragraph{Stability intuition.} Varaiya~\cite{varaiya2013maxpressure} proved that serving the phase
+of maximum pressure stabilises queues for any demand inside the capacity region, using only local
+information. \prism{} keeps that core because phases are ranked by pressure. However, the minimum and
+maximum greens, the hysteresis $\theta$ and the urgency factor mean that the formal proof does not
+transfer exactly.  This trade-off for fairness is also made by cycle-based variants~\cite{kouvelas2014maxpressure}.
+\prism{}-R's cyclic selection makes the position stronger rather than weaker. Levin, Hu and
+Odell~\cite{levin2020cyclic} prove that imposing a fixed phase order, with skipping of phases that have no
+demand, preserves the maximum stability region of acyclic max-pressure, and Le et
+al.~\cite{le2015decentralized} reach a comparable conclusion for constrained decentralised policies. The
+cyclic-with-skip rule used here is exactly that construction, so the departure from Varaiya's policy now lies
+only in the green bounds, the hysteresis and the urgency term.
+
+\paragraph{Complexity.} Each object is assigned to one movement and one exit, so state computation is
+$O(n)$ in the number of objects $n$, and the memory held is likewise $O(n)$: one record per track, plus the
+track identifiers and occlusion-held objects, which are retained for 5~s. The mean decision time measured was
+\est{0.25~ms} at \est{400} objects, with about \est{162~KiB} retained
+(\cref{sec:eval-nonfunctional}); this supersedes the \est{0.4~ms} reported for the original formulation.
+
+\paragraph{Explainability.} Every decision writes a record containing time, phase, $t_g$, the rule
+that fired, all $P_\phi$, $U_\phi$ and $S_\phi$, and $G_{\text{req}}$.  For example, ``pressure switch: $S_{\phi_3} = 18.4 > 1.25 \times
+11.2 + 2$''. 
+
+\paragraph{Parameter justification.} \Cref{tab:impl-prism-params} lists the design parameters and the
+reasoning behind each value. They were fixed on the balanced 300, 500 and 700~veh/h scenarios using tuning
+seeds 1--5 only, by a grid search over the edge blend $\eta$, the discharge ratio $\rho$ and the hysteresis
+$\theta$; no evaluation seed and none of the seven situation scenarios took part in the tuning.
+
+{\small
+\renewcommand{\arraystretch}{1.1}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{3.3cm}>{\raggedright\arraybackslash}p{2.0cm}>{\raggedright\arraybackslash}p{8.4cm}@{}}
+\caption{\prism{}-R design parameters and their justification; values that differ from the original
+specification are marked}\label{tab:impl-prism-params}\\
+\toprule
+Parameter & Value & Justification\\
+\midrule
+\endfirsthead
+\toprule
+Parameter & Value & Justification\\
+\midrule
+\endhead
+\midrule \multicolumn{3}{r}{\footnotesize continued on next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+$\gamma$ (arrival weight) & 0.5 & Arrivals within $H$ are uncertain and not yet delaying anyone, so they count half as much as queued PCU.\\
+$\delta$ (exit weight) & 0.6 & Penalises congested exits without letting downstream noise dominate the upstream queue ($\delta<1$).\\
+$\kappa$ (urgency gain) & 1.5 & Score at most $2.5\times$ at $T_{\text{starve}}$; the quadratic form keeps short reds almost unaffected.\\
+$\theta$ (hysteresis) & \textbf{0.10} & \emph{Was 0.25.} With $\rho = 1$ already preventing early switching, a large hysteresis only delayed switches that were justified; a challenger must still be 10\% stronger, which remains enough to absorb sensor noise.\\
+$\varepsilon$ (margin) & 2 PCU & Absolute margin for light traffic, where relative margins are meaningless.\\
+$\rho$ (discharge ratio) & \textbf{1.0} & \emph{Was 0.6.} A pressure switch is now allowed only once the green has run for the whole required time, so the queue present at green start has had time to discharge. With the frozen target this is a meaningful commitment rather than, as before, a moving one.\\
+$\eta$ (range-edge blend) & 0.5 & Moves $G_{\text{req}}$ halfway to $G_{\max}$ when the queue reaches the range edge (\cref{eq:impl-edgeblend}); blending rather than saturating keeps the controller responsive if the hidden queue is short.\\
+Range-edge distance & 50 m & A stopped object at least this far back is treated as touching the edge of the observable range.\\
+Hidden-queue entry / clear radius & 45 / 30 m & Tracks entering beyond 45~m feed the learnt arrival rate; the hidden queue is cleared when every object is nearer than 30~m.\\
+Hidden-queue EWMA constant & 120 s & Long enough to average out Poisson arrival noise, short enough to follow a peak.\\
+Hidden-queue cap & 60 PCU & Roughly the standing capacity of an approach beyond the sensor; prevents unbounded growth if the clear condition is never met.\\
+Occlusion hold & 5 s & A stopped object that vanishes unseen keeps counting; short enough to forget a vehicle that genuinely departed.\\
+Next-phase selection & cyclic with skip & Fixed order $\phi_1\!\to\!\phi_4$, skipping phases that cannot discharge; guarantees right turns their turn~\cite{levin2020cyclic}.\\
+Rest in green & enabled & Hold the current green when no other phase can discharge.\\
+Rest in red & enabled & Rest in all-red when the junction is empty, so the next arrival waits only the clearance interval.\\
+$H$ (horizon) & 10 s & About 100 m at free-flow speed, which covers the whole observable approach.\\
+$\tau_{\text{gap}}$ (gap time) & 3 s & Standard actuated gap; equal to the B2 \texttt{max-gap} for a fair comparison.\\
+$l_s$ (start-up lost time) & 2.0 s & Typical start-up lost time~\cite{hcm2016}.\\
+$h_s$ (headway per PCU) & 1.95 s & $3600/1850$, from the \dtx{} saturation flow.\\
+$G_{\min}$ & 10 / 5 s & Through / right; driver expectation and clearance of the queue head.\\
+$G_{\max}$ & 50 / 25 s & Through / right; limits red time of the other three phases.\\
+$T_{\text{starve}}$ & 120 s & Longer than any observed red (67 s) and acceptable to waiting drivers.\\
+Amber / all-red & 3 s / 2 s & Same as the existing signal.\\
+$\Delta$ (decision period) & 1 s & Two \sumo{} steps; matches the \vls{} scan rate.\\
+\end{longtable}
+}
+
+\subsection{Baseline controllers}\label{sec:impl-baselines}
+
+Three baselines, an oracle variant and one ablation were implemented.
+
+\paragraph{B1: observed fixed-time plan.} The existing signal runs the 78~s plan of
+\cref{tab:impl-b1}. The greens of $\phi_1$ and $\phi_2$ and the red of $\phi_3$ were timed from the
+footage. Since every cycle contains four intergreens of $3 + 2 = 5$~s, the $\phi_3$ green is
+$78 - 3 - 60 = 15$~s, and the remaining green follows from
+$21 + 8 + 15 + G_{\phi_4} + 4 \times 5 = 78$, giving \est{14~s} for $\phi_4$.  
+
+\begin{table}[htbp]
+\centering
+\caption{Baseline B1: observed fixed-time plan (cycle 78 s)}\label{tab:impl-b1}
+\small
+\begin{tabular}{@{}llrl@{}}
+\toprule
+Phase & Movement (both directions) & Green (s) & Source\\
+\midrule
+$\phi_1$ & Bypass through & 21 & Observed (red 54 s)\\
+$\phi_2$ & Bypass protected right & 8 & Observed (red 67 s)\\
+$\phi_3$ & Cross-road through & 15 & $78 - 3 - 60$\\
+$\phi_4$ & Cross-road protected right & \est{14} & $78 - (21+8+15) - 4\times5$\\
+\midrule
+\multicolumn{2}{@{}l}{Intergreen after each phase} & 3 + 2 & Amber + all-red\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{B2: SUMO actuated.} \sumo{}'s built-in gap-based actuated controller~\cite{sumo_actuated}
+was run on the same four phases with \texttt{minDur} 10/5~s and \texttt{maxDur} 50/25~s for
+through/right phases, its \emph{default} induction loops and a maximum gap of 3~s. It extends a green while
+vehicles keep arriving but ignores vehicle size and the demand on other phases. One limitation of this
+configuration must be stated plainly, because it affects the comparison. \sumo{} generates default detectors
+for lanes that serve a phase's \emph{major} movements, and the protected right-turn phases $\phi_2$ and
+$\phi_4$ receive no detectors of their own. Those phases therefore cannot gap out on their own demand and
+always run to \texttt{minDur}, which starves right turns under heavy demand and is the main reason B2
+deteriorates so sharply at 700~veh/h (\cref{sec:eval-results}). Adding hand-placed detectors would have made
+B2 stronger, but it would also have made it a different, hand-tuned controller; the default configuration was
+kept because it is what an authority deploying \sumo{}-style actuation out of the box would obtain, and the
+weakness is reported rather than concealed.
+
+\paragraph{B3: Webster-optimised fixed time.}  This separates adaptivity from simple re-timing. Webster's
+method~\cite{webster1958} was applied \emph{per scenario}, to the mean demand that
+\texttt{gen\_scenario\_routes.py} writes for that scenario, so that each scenario is compared against the best
+fixed plan for its own demand rather than against one plan for all ten.
+Left turns use the slip lanes and were excluded. Because waiting right-turners occupy the offside lane
+during through phases, \dtx{} showed that \est{75\%} of through traffic used the kerb lane, so the
+critical lane flow of a through phase is $0.75$ of the heavier approach's through flow. For a
+right-turn phase it is the full right-turn flow in the offside lane. The flow ratio of phase $i$ is
+$y_i = q_i/s$ with $s = $ \est{1850~PCU/h/lane}, $Y = \sum_i y_i$, the lost time is
+$L = 4 \times 5 = 20$~s, and
+\begin{equation}
+  C_0 = \frac{1.5L + 5}{1 - Y}, \qquad g_i = (C_0 - L)\,\frac{y_i}{Y}.
+  \label{eq:impl-webster}
+\end{equation}
+At the demand levels of most scenarios $Y$ is small, so \cref{eq:impl-webster} returns a cycle whose effective
+green $C_0 - L$ is shorter than the sum of the minimum greens, $\sum_i G_{\min}(i) = 10+5+10+5 = 30$~s. In
+that case the cycle is raised to $\sum_i G_{\min}(i) + L$ and the greens are set to the minima, since a plan
+that cannot clear the head of a queue is not a fair benchmark. The result is a 50~s cycle at 10/5/10/5~s for
+most scenarios, and a 61~s cycle at 13/8/12/8~s for the heavy-vehicle scenario and for balanced 700~veh/h,
+where $Y$ is large enough for \cref{eq:impl-webster} to bind (\cref{tab:impl-webster}).
+
+\begin{table}[htbp]
+\centering
+\caption{Hourly demand extracted by \dtx{} from the two survey sessions, used to calibrate the model and to
+parameterise the scenario generator (PCU/h; L = slip lane, uncontrolled)}\label{tab:impl-webster-demand}
+\small
+\begin{tabular}{@{}lrrrrcrrrr@{}}
+\toprule
+ & \multicolumn{4}{c}{Morning} & & \multicolumn{4}{c}{Afternoon}\\
+\cmidrule(lr){2-5}\cmidrule(lr){7-10}
+Approach & L & T & R & Total & & L & T & R & Total\\
+\midrule
+Bypass 1 & \est{150} & \est{960} & \est{170} & \est{1,280} & & \est{90} & \est{570} & \est{120} & \est{780}\\
+Bypass 2 & \est{120} & \est{680} & \est{130} & \est{930} & & \est{80} & \est{480} & \est{100} & \est{660}\\
+Cross 1 & \est{100} & \est{340} & \est{150} & \est{590} & & \est{60} & \est{300} & \est{110} & \est{470}\\
+Cross 2 & \est{60} & \est{210} & \est{80} & \est{350} & & \est{35} & \est{100} & \est{40} & \est{175}\\
+\midrule
+Total & \est{430} & \est{2,190} & \est{530} & \est{3,150} & & \est{265} & \est{1,450} & \est{370} & \est{2,085}\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Webster plans for B3, computed per scenario from its mean demand (times in s)}\label{tab:impl-webster}
+\small
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+Scenario & $Y$ & Cycle (s) & Greens $\phi_1/\phi_2/\phi_3/\phi_4$ (s)\\
+\midrule
+Balanced 300 & \est{0.17} & \est{50} & \est{10 / 5 / 10 / 5}\\
+Balanced 500 & \est{0.29} & \est{50} & \est{10 / 5 / 10 / 5}\\
+Balanced 700 & \est{0.40} & \est{61} & \est{13 / 8 / 12 / 8}\\
+Empty side road & \est{0.21} & \est{50} & \est{10 / 5 / 10 / 5}\\
+Unbalanced roads & \est{0.27} & \est{50} & \est{10 / 5 / 10 / 5}\\
+Peak (mean) & \est{0.24} & \est{50} & \est{10 / 5 / 10 / 5}\\
+Platoon surge (mean) & \est{0.25} & \est{50} & \est{10 / 5 / 10 / 5}\\
+Night & \est{0.05} & \est{50} & \est{10 / 5 / 10 / 5}\\
+Heavy vehicles & \est{0.42} & \est{61} & \est{13 / 8 / 12 / 8}\\
+Sensor failure & \est{0.29} & \est{50} & \est{10 / 5 / 10 / 5}\\
+\bottomrule
+\multicolumn{4}{@{}l}{\footnotesize A cycle of 50~s is $\sum_i G_{\min}(i) + L = 30 + 20$, applied where $C_0 - L < \sum_i G_{\min}(i)$.}
+\end{tabular}
+\end{table}
+
+Two observations follow. First, in eight of the ten scenarios Webster's formula asks for less green than the
+minimum greens allow, so B3 reduces to the shortest lawful cycle. This is not a defect of the method but a
+consequence of the junction being undersaturated for much of the day, and it already represents a large
+improvement on the existing plan, whose 78~s cycle spends 20~s of every cycle on intergreens regardless of
+demand. Second, where the formula does bind, at balanced 700~veh/h and in the heavy-vehicle scenario, it
+lengthens the cycle to 61~s and shifts green towards the bypass. The comparison with the existing plan is
+instructive in its own right: under B1, $\phi_1$ carries a degree of saturation
+$x = y\,C/g$ well above unity at the observed morning demand, so the bypass through movement is heavily
+oversaturated while $\phi_4$ runs far below capacity. The existing plan therefore allocates its green time
+to the wrong phases and uses one cycle length for very different demand levels.
+However, Webster's formula assumes stationary random arrivals and undersaturation, and it ignores
+queues that spill back past the slip-lane entries, so it cannot respond to the peak, the surge or the empty
+side road at all. The simulated benefit of B3 was therefore expected
+to be smaller than the analytical one (\cref{sec:eval-results}).
+
+\paragraph{PRISM-GT (oracle).} The same \prism{}-R code was run with the \vls{} replaced by an exact
+ground-truth object list, with true positions, no dropout or occlusion and true-class PCU rather than
+size-class PCU. The gap between \prism{}-R and PRISM-GT measures the cost of imperfect sensing.
+
+\paragraph{PRISM, thesis law (ablation).} The control law exactly as first specified in this chapter, before
+the revisions of \cref{sec:impl-prism}, was run on identical sensing: recomputed $G_{\text{req}}$, no
+range-edge blend, no hidden queue, no occlusion persistence, $\theta = 0.25$, $\rho = 0.6$, six rules and
+acyclic arg-max selection. Because every revision is a parameter, this ablation differs from \prism{}-R only
+in configuration, so the difference between them isolates the effect of the revisions rather than of any
+other change. It is reported alongside the baselines throughout \cref{ch:eval}.
+
+% ------------------------------------------------------------------
+\section{Technology selection}\label{sec:impl-tech}
+
+Every technology was selected by comparing realistic alternatives against the needs of this
+research: free availability to a student, maturity, support for small objects in aerial video,
+support for heterogeneous lane-less traffic and scriptable control of the signal.
+\Cref{tab:impl-tech-core,tab:impl-tech-libs} summarise the decisions. No web front-end or custom
+dashboard was built. Results and live decisions were presented through SUMO-GUI only, with the
+\vls{} points and the current \prism{} reason overlaid.  This kept the effort on the control law.
+
+\begin{table}[htbp]
+\centering
+\caption{Technology selection: language, models and simulator}\label{tab:impl-tech-core}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.2cm}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}p{2.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Concern & Alternatives & Chosen & Reason\\
+\midrule
+Programming language & C++, Java, MATLAB, Python & Python 3.11 & Native TraCI/libsumo bindings; Ultralytics, OpenCV and SciPy in one language; fast prototyping. C++ speed is unnecessary because a decision takes under 1 ms. MATLAB is licensed and has weak SUMO support.\\
+Detection model & YOLO11, RT-DETR, Faster R-CNN, YOLOv8s & YOLOv8s & Mature, well documented, VisDrone weights available, trains at 1280 px on a free T4. YOLO11~\cite{jocher2024yolo11} offered marginal gains with less community evidence at the time; RT-DETR~\cite{zhao2024rtdetr} needs more GPU memory; Faster R-CNN~\cite{ren2015faster} is two-stage and too slow for two hours of video.\\
+Tracker & SORT, DeepSORT, BoT-SORT, ByteTrack & ByteTrack & Recovers low-score boxes of small motorcycles; needs no re-identification network, which is of little use for top-down vehicles. SORT~\cite{bewley2016sort} loses occluded objects; DeepSORT~\cite{wojke2017deepsort} and BoT-SORT~\cite{aharon2022botsort} add appearance models with little benefit here.\\
+Simulator & VISSIM, Aimsun, CARLA, SUMO & SUMO & Open source; sublane model for motorcycle filtering; TraCI for per-second signal control. VISSIM~\cite{fellendorf2010vissim} and Aimsun~\cite{casas2010aimsun} are commercial; CARLA~\cite{dosovitskiy2017carla} targets single-vehicle autonomy, not junction throughput.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Technology selection: libraries and tooling}\label{tab:impl-tech-libs}
+\small
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{2.6cm}>{\raggedright\arraybackslash}p{3.6cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+Need & Chosen (alternatives) & Reason\\
+\midrule
+Image processing & OpenCV~\cite{bradski2000opencv} (scikit-image) & ORB, RANSAC homography and warping in optimised C++ behind a Python interface.\\
+Numerics & NumPy/SciPy~\cite{harris2020numpy,virtanen2020scipy} & Vectorised geometry; Savitzky--Golay filter; Wilcoxon test.\\
+Tabular data & Pandas~\cite{mckinney2010pandas} (plain CSV) & Grouping trajectories by track, class and 5-min bin.\\
+Tracking utilities & supervision~\cite{roboflow_supervision} & Maintained ByteTrack implementation, zone polygons and annotators.\\
+Small objects & SAHI~\cite{akyon2022sahi} (higher input size only) & Tiled inference raises recall for 20-pixel motorcycles without retraining at 4K.\\
+Simulation API & libsumo for batches, TraCI for GUI runs & libsumo runs in-process and avoids socket overhead; TraCI is required to drive SUMO-GUI.\\
+Annotation & CVAT and Roboflow & Free; export directly to YOLO format; Roboflow handled the 70/15/15 split.\\
+Testing & pytest (unittest) & Concise fixtures and parametrised tests for phase safety and edge cases.\\
+Version control & Git and GitHub & History of every configuration and seed, which supports reproducibility.\\
+Compute & Google Colab T4 GPU (local CPU) & Free GPU for fine-tuning; simulation runs on the student laptop.\\
+Front-end & None (SUMO-GUI only) & A dashboard was a ``Won't have'' requirement; SUMO-GUI shows the network, vehicles and signal states.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+% ------------------------------------------------------------------
+\section{Key implementation}\label{sec:impl-key}
+
+The code follows the repository layout planned in \cref{sec:srs-arch}: \texttt{extraction/} for \dtx{},
+\texttt{sumo/} for the network and demand, \texttt{sensing/} for the \vls{}, \texttt{control/} for
+\prism{} and the baselines, \texttt{experiments/} for batch runs and statistics, and \texttt{tests/}.
+Only the fragments that embody the contribution are shown here; longer listings are in
+\cref{app:code}.
+
+\paragraph{Waiting-time computation.} \Cref{lst:impl-wait} implements \cref{eq:impl-speed,eq:impl-wait,eq:impl-delay}.
+The decisive detail is that the 0.1~m/s threshold is the same constant \sumo{} uses, so observed and
+simulated waiting times are directly comparable during calibration. 
+
+\begin{lstlisting}[style=py,caption={Per-vehicle waiting time and control delay (\texttt{extraction/metrics.py})},label={lst:impl-wait}]
+WAIT_SPEED = 0.1   # m/s, identical to SUMO's waitingTime threshold
+DT = 0.1           # s, video processed at 10 fps
+
+def vehicle_metrics(trk: pd.DataFrame, zones: ZoneMap, v_free: float) -> dict:
+    """Waiting time W_i, time in frame and control delay d_i for one track."""
+    xy = savgol_filter(trk[["x", "y"]].to_numpy(), 11, 2, axis=0)
+    step = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+    v = np.r_[step[0], step] / DT                     # speed per sample
+    in_approach = zones.in_approach(xy)               # point-in-polygon
+    W = DT * np.count_nonzero((v < WAIT_SPEED) & in_approach)
+    t_frame = trk.t.iloc[-1] - trk.t.iloc[0]
+    delay = max(t_frame - step.sum() / v_free, 0.0)
+    censored = (trk.t.iloc[0] <= zones.t_start + DT or
+                trk.t.iloc[-1] >= zones.t_end - DT)
+    return {"track_id": int(trk.track_id.iloc[0]),
+            "cls": trk.cls.mode().iat[0],             # majority vote
+            "movement": zones.movement(xy),
+            "W": W, "t_frame": t_frame, "delay": delay,
+            "censored": censored}
+\end{lstlisting}
+
+\paragraph{VLS scan.} \Cref{lst:impl-vls} shows the error model. Vehicles are processed in increasing
+range so that the list of potential occluders only contains nearer tall vehicles, which keeps the
+occlusion test cheap.
+
+\begin{lstlisting}[style=py,caption={Noisy, occluded LiDAR scan (\texttt{sensing/virtual\_lidar.py})},label={lst:impl-vls}]
+def scan(self, vehicles: list[GTVehicle]) -> list[Detection]:
+    near = sorted((v for v in vehicles if self.range(v) <= self.R), key=self.range)
+    dets, blockers = [], []                   # blockers: tall vehicles seen so far
+    for v in near:
+        r = self.range(v)
+        span = self.azimuth_span(v)
+        if any(overlap(span, b) >= 0.7 * width(span) for b in blockers):
+            continue                          # occluded by bus/lorry
+        if v.height >= 2.5:
+            blockers.append(span)
+        if self.rng.random() < 0.01 + 0.04 * (r / self.R) ** 2:
+            continue                          # range-dependent dropout
+        sigma = 0.10 + 0.002 * r
+        x, y = v.pos + self.rng.normal(0.0, sigma, 2)
+        length = v.length + self.rng.normal(0.0, sigma)
+        dets.append(Detection(x, y, size_class(length)))
+    for _ in range(self.rng.poisson(0.2)):    # clutter
+        dets.append(Detection(*self.random_point_in_range(), "small"))
+    return dets
+
+def size_class(length: float) -> str:
+    return "small" if length < 3.2 else "medium" if length <= 6.0 else "large"
+\end{lstlisting}
+
+\paragraph{Pressure and score.} \Cref{lst:impl-pressure} computes \cref{eq:pressure,eq:phase-pressure,eq:urgency,eq:score}
+in a single pass over the object list. This is the source of the $O(n)$ complexity.
+
+\begin{lstlisting}[style=py,caption={Movement pressure and phase score (\texttt{control/prism.py})},label={lst:impl-pressure}]
+def movement_state(self, objs: list[TrackedObject]) -> dict[Movement, MovState]:
+    st = {m: MovState() for m in MOVEMENTS}
+    seen = {m: [] for m in MOVEMENTS}
+    for o in objs + self.held_occluded(self.t_now):    # single O(n) pass
+        if o.approach is None:                         # exit link
+            self.occ[o.exit_link] += o.pcu
+            continue
+        for m, share in self.split(o):                 # offside lane: eq. (5.x)
+            if o.v < Q_SPEED and o.d_stop <= self.p.range_m:
+                st[m].Q += share * o.pcu
+                seen[m].append(o.d_stop)
+            elif o.v >= Q_SPEED and o.d_stop / o.v <= self.p.H:
+                st[m].A += share * o.pcu
+                st[m].min_eta = min(st[m].min_eta, o.d_stop / o.v)
+    for m, ds in seen.items():                         # hidden queue at the range edge
+        st[m].at_edge = bool(ds) and max(ds) >= self.p.edge_m      # 50 m
+        self.hidden[m] = self.update_hidden(m, st[m].at_edge, objs)
+        st[m].Q += self.hidden[m]
+    return st
+
+def scores(self, st, t_now: float) -> dict[int, float]:
+    S = {}
+    for ph in PHASES:
+        P = sum(st[m].Q + self.p.gamma * st[m].A
+                - self.p.delta * self.occ[EXIT[m]] for m in ph.movements)
+        U = 1.0 + self.p.kappa * (self.red_time(ph, t_now) / self.p.T_starve) ** 2
+        S[ph.id] = max(P, 0.0) * U
+    return S
+\end{lstlisting}
+
+\paragraph{Decision loop.} \Cref{lst:impl-decide} is a direct transcription of the seven rules. Each branch returns a reason string, which provides the explainability. Note that \texttt{self.g\_req\_frozen} is set once, in \texttt{start\_green()}, and is not recomputed here.
+
+\begin{lstlisting}[style=py,caption={The \texttt{decide()} rule cascade (\texttt{control/prism.py})},label={lst:impl-decide}]
+def decide(self, objs, t_now: float) -> Decision:
+    st = self.movement_state(objs)
+    S = self.scores(st, t_now)
+    g, tg, p = self.green, t_now - self.green_start, self.p
+    others = [ph for ph in PHASES if ph is not g]
+    waiting = [ph for ph in others if self.is_waiting(ph, st)]
+    ready = [ph for ph in others if self.can_discharge(ph, st)]
+    if tg < g.gmin:                                           # R1
+        return Decision(EXTEND, "min_green", S)
+    if self.spillback(g):                                     # R2
+        return Decision(TERMINATE, "spillback", S)
+    if tg >= g.gmax and waiting:
+        return Decision(TERMINATE, "max_out", S)
+    if self.starved(st, t_now, exclude=g):                    # R3
+        return Decision(TERMINATE, "starvation", S)
+    if not self.any_occupied(st):                             # R4
+        return Decision(TERMINATE, "rest_in_red", S)
+    if not ready:                                             # R5
+        return Decision(EXTEND, "rest_in_green", S)
+    queue_g = sum(st[m].Q for m in g.movements)
+    eta_g = min(st[m].min_eta for m in g.movements)
+    if queue_g <= 0.5 and eta_g > p.tau_gap:                  # R6
+        return Decision(TERMINATE, "gap_out", S)
+    best = max(S[ph.id] for ph in ready)                      # R7
+    if (best > (1 + p.theta) * S[g.id] + p.eps
+            and tg >= p.rho * self.g_req_frozen):
+        return Decision(TERMINATE, "pressure_switch", S)
+    return Decision(EXTEND, "extend", S)
+\end{lstlisting}
+
+\paragraph{TraCI integration.} \Cref{lst:impl-loop} shows the experiment loop. The controller is called
+every second step, which gives the 1~s decision period with a 0.5~s simulation step. Signal states are
+set only through the phase manager, which inserts amber and all-red. The same loop drives B1--B3,
+\prism{} and PRISM-GT, selected from \texttt{scenarios.yaml}, so the comparison is like-for-like.
+
+\begin{lstlisting}[style=py,caption={Simulation loop (\texttt{experiments/run\_experiment.py})},label={lst:impl-loop}]
+def run(scn: Scenario, seed: int, gui: bool = False) -> Path:
+    sim = traci if gui else libsumo
+    sim.start(["sumo-gui" if gui else "sumo", "-c", scn.cfg, "--seed", str(seed),
+               "--step-length", "0.5", "--lateral-resolution", "0.8",
+               "--tripinfo-output", scn.out(seed, "tripinfo.xml")])
+    sensor = GroundTruth(sim) if scn.oracle else VirtualLidar(sim, seed=seed)
+    tracker = PerceptionTracker(alpha=0.5, beta=0.1, gate=2.5)
+    ctrl = make_controller(scn.controller, PhaseManager(sim, TLS_ID))
+    log, step = DecisionLog(scn.out(seed, "decisions.csv")), 0
+    while sim.simulation.getMinExpectedNumber() > 0 and step < 2 * 3900:
+        sim.simulationStep()
+        step += 1
+        if step % 2:                      # decide every 1 s (two 0.5 s steps)
+            continue
+        t = sim.simulation.getTime()
+        objs = tracker.update(sensor.scan(), t)
+        decision = ctrl.step(objs, t)     # PRISM: decide(); B1/B3: plan; B2: SUMO
+        log.write(t, decision)
+        if gui:
+            show_overlay(sim, objs, decision)   # VLS points and reason
+    sim.close()
+    return scn.out(seed, "tripinfo.xml")
+\end{lstlisting}
+
+\paragraph{SUMO configuration.} \Cref{lst:impl-xml} gives an excerpt of the vehicle types and the B1
+program. The fail-safe re-uses exactly this program, so the fallback is the plan that road users
+already know.
+
+\begin{lstlisting}[style=xml,caption={Excerpt of \texttt{vtypes.add.xml} and the B1 signal program},label={lst:impl-xml}]
+<vType id="motorcycle" vClass="motorcycle" length="2.0" maxSpeed="19.44"
+       accel="2.8" sigma="0.5" tau="1.0" lcSublane="10" minGapLat="0.3"
+       speedFactor="normc(1,0.1)"/>
+<vType id="threewheeler" vClass="passenger" length="2.7" width="1.4"
+       maxSpeed="13.89" accel="1.8" sigma="0.5" tau="1.0" guiShape="passenger/hatchback"/>
+<vType id="bus" vClass="bus" length="11.5" maxSpeed="16.67" accel="1.2"/>
+<tlLogic id="maviththara" type="static" programID="B1_fixed78" offset="0">
+  <phase duration="21" state="GGrrrrGGrrrr"/>  <!-- phi1 bypass through -->
+  <phase duration="3"  state="yyrrrryyrrrr"/>
+  <phase duration="2"  state="rrrrrrrrrrrr"/>
+  <phase duration="8"  state="rrGrrrrrGrrr"/>  <!-- phi2 bypass right   -->
+  <phase duration="3"  state="rryrrrrryrrr"/>
+  <phase duration="2"  state="rrrrrrrrrrrr"/>
+  <phase duration="15" state="rrrGGrrrrGGr"/>  <!-- phi3 cross through  -->
+  <phase duration="3"  state="rrryyrrrryyr"/>
+  <phase duration="2"  state="rrrrrrrrrrrr"/>
+  <phase duration="14" state="rrrrrGrrrrrG"/>  <!-- phi4 cross right    -->
+  <phase duration="3"  state="rrrrryrrrrry"/>
+  <phase duration="2"  state="rrrrrrrrrrrr"/>
+</tlLogic>
+\end{lstlisting}
+
+% ------------------------------------------------------------------
+\section{Chapter summary}
+
+This chapter described how the artefact was designed and built. \dtx{} turned the drone videos into
+anonymous metric trajectories through stabilisation, YOLOv8s detection with SAHI, ByteTrack tracking,
+homography and Savitzky--Golay smoothing, and it measured waiting time with the same 0.1~m/s
+definition that \sumo{} uses. The \sumo{} model reproduced the left-hand, 2+2-lane junction with
+give-way slip lanes, sublane motorcycles and a four-phase signal, rebuilt reproducibly from the OpenStreetMap
+extract by \texttt{netconvert} patches and driven by ten drone-derived demand scenarios. The \vls{} supplied a
+noisy, occluded, class-blind object list, with two-point track initiation, coasting tracks withheld and map
+matching carried across the intermediate OSM nodes. \prism{} combined PCU-weighted movement pressure, an
+arrival term, a downstream penalty and a quadratic urgency factor; after a first evaluation exposed five
+distinct modelling errors, it was revised into \prism{}-R, which adds a hidden-queue state, a frozen
+green target, a range-edge blend, occlusion persistence, resting in green and in red, and cyclic phase
+selection with skipping, in seven transparent rules, with proven safety, a 175~s fairness bound,
+$O(n)$ cost and a logged reason for every decision. Three baselines were implemented, including a
+Webster plan re-timed per scenario, together with a ground-truth oracle and an ablation that runs the
+original law on identical sensing.
+
+\Cref{ch:eval} now tests whether these designs meet the requirements and how \prism{} performs
+against the baselines.

@@ -1,0 +1,258 @@
+% ==================================================================
+% Appendix D — Additional code listings   (writer W5)
+% ==================================================================
+\chapter{Additional Code Listings}\label{app:code}
+
+This appendix gives longer versions of the code discussed in \cref{sec:impl-key}. The complete
+repository (\texttt{prism-traffic/}) contains the remaining modules and the configuration files.
+
+\section*{D.1 \prism{} controller (\texttt{control/prism.py})}
+
+\begin{lstlisting}[style=py,caption={\texttt{PrismController}: state, phase selection and fail-safe},label={lst:app-prism}]
+from dataclasses import dataclass, field
+from .phases import PHASES, EXIT, MOVEMENTS, Phase, PhaseManager
+
+Q_SPEED = 1.4          # m/s, queued if slower (about 5 km/h)
+
+@dataclass
+class PrismParams:
+    gamma: float = 0.5;  delta: float = 0.6;  kappa: float = 1.5
+    theta: float = 0.10; eps: float = 2.0;    rho: float = 1.0
+    H: float = 10.0;     tau_gap: float = 3.0
+    l_s: float = 2.0;    h_s: float = 3600 / 1850
+    T_starve: float = 120.0; spill_ratio: float = 0.85; C_exit: float = 23.0
+    failsafe_after: int = 5; recover_after: int = 10
+    # --- PRISM-R revisions; the thesis law is this class with these disabled
+    freeze_g_req: bool = True        # evaluate G_req once per green
+    edge_blend: float = 0.5          # eta in eq. (5.17)
+    range_m: float = 60.0            # observable range from the stop line
+    edge_m: float = 50.0             # queue counts as touching the range edge
+    hidden_in_m: float = 45.0; hidden_clear_m: float = 30.0
+    hidden_tau: float = 120.0; hidden_cap: float = 60.0
+    occlusion_hold: float = 5.0
+    cyclic: bool = True              # cyclic-with-skip selection
+    rest_in_green: bool = True; rest_in_red: bool = True
+
+@dataclass
+class MovState:
+    Q: float = 0.0; A: float = 0.0; min_eta: float = float("inf")
+    at_edge: bool = False
+
+class PrismController:
+    def __init__(self, pm: PhaseManager, shares: dict, p: PrismParams = PrismParams()):
+        self.pm, self.shares, self.p = pm, shares, p
+        self.green: Phase = PHASES[0]
+        self.green_start, self.g_req_frozen = 0.0, PHASES[0].gmin
+        self.last_green_end = {ph.id: 0.0 for ph in PHASES}
+        self.occ: dict = {}
+        self.hidden = {m: 0.0 for m in MOVEMENTS}   # unobserved queue beyond range
+        self.lam = {m: 0.0 for m in MOVEMENTS}      # EWMA arrival rate at the edge
+        self.held: dict = {}                        # occluded stopped objects, 5 s
+        self.missing, self.valid, self.failsafe = 0, 0, False
+
+    # ---------- per-step entry point --------------------------------------
+    def step(self, objs, t_now: float) -> "Decision":
+        if self.pm.in_intergreen(t_now):
+            if self.pm.intergreen_ends(t_now):
+                nxt = self.select_next(objs, t_now)
+                if nxt is None:               # rest in all-red until a vehicle appears
+                    return Decision(HOLD, "resting_all_red", {})
+                self.start_green(nxt, t_now, self.movement_state(objs))
+            return Decision(HOLD, "intergreen", {})
+        if objs is None and 0 < self.missing < self.p.failsafe_after:
+            return Decision(EXTEND, "sensor_gap", {})     # hold green, 1-4 scans
+        if not self.sensor_ok(objs):
+            return self.pm.run_fixed_plan("B1_fixed78", t_now)
+        d = self.decide(objs, t_now)          # Listing 5.4
+        if d.action == TERMINATE:
+            self.last_green_end[self.green.id] = t_now
+            self.pm.start_intergreen(self.green, t_now)   # 3 s amber + 2 s all-red
+        return d
+
+    # ---------- helpers ----------------------------------------------------
+    def red_time(self, ph: Phase, t_now: float) -> float:
+        return 0.0 if ph is self.green else t_now - self.last_green_end[ph.id]
+
+    def g_req(self, ph: Phase, st) -> float:
+        """Green needed to clear the queue present NOW. Called once per green."""
+        load = sum(st[m].Q + self.p.gamma * st[m].A for m in ph.movements)
+        g = min(max(self.p.l_s + self.p.h_s * load / ph.n_lanes, ph.gmin), ph.gmax)
+        if any(st[m].at_edge for m in ph.movements):     # range-edge blend
+            g += self.p.edge_blend * (ph.gmax - g)
+        return g
+
+    def spillback(self, ph: Phase) -> bool:
+        return any(self.occ.get(EXIT[m], 0.0) / self.p.C_exit > self.p.spill_ratio
+                   for m in ph.movements)
+
+    def is_waiting(self, ph: Phase, st) -> bool:
+        """Any queued or arriving PCU -- NOT 'pressure > 0', which a congested
+        exit can drive negative while vehicles are still waiting."""
+        return sum(st[m].Q + st[m].A for m in ph.movements) > 0.0
+
+    def can_discharge(self, ph: Phase, st) -> bool:
+        return self.is_waiting(ph, st) and not self.spillback(ph)
+
+    def any_occupied(self, st) -> bool:
+        return any(self.is_waiting(ph, st) for ph in PHASES)
+
+    def starved(self, st, t_now, exclude=None) -> list[Phase]:
+        s = [ph for ph in PHASES if ph is not exclude and self.can_discharge(ph, st)
+             and self.red_time(ph, t_now) >= self.p.T_starve]
+        return sorted(s, key=lambda ph: -self.red_time(ph, t_now))  # oldest first
+
+    def select_next(self, objs, t_now: float) -> Phase | None:
+        st = self.movement_state(objs)
+        hungry = self.starved(st, t_now, exclude=self.green)
+        if hungry:
+            return hungry[0]
+        ready = [ph for ph in PHASES if ph is not self.green
+                 and self.can_discharge(ph, st)]
+        if not ready:
+            return None                       # rest in all-red
+        if self.p.cyclic:                     # cyclic with skip, PHASES = phi1..phi4
+            i = PHASES.index(self.green)
+            order = PHASES[i + 1:] + PHASES[:i + 1]
+            return next(ph for ph in order if ph in ready)
+        S = self.scores(st, t_now)            # thesis law: acyclic arg-max
+        return max(ready, key=lambda ph: S[ph.id])
+
+    def start_green(self, ph: Phase, t_now: float, st) -> None:
+        self.green, self.green_start = ph, t_now
+        self.g_req_frozen = self.g_req(ph, st)   # held for the whole green
+        self.pm.set_green(ph)
+
+    def sensor_ok(self, objs) -> bool:
+        if objs is None:                       # no data packet (not "no vehicles")
+            self.missing, self.valid = self.missing + 1, 0
+        else:
+            self.missing, self.valid = 0, self.valid + 1
+        if self.missing >= self.p.failsafe_after and not self.failsafe:
+            self.pm.start_intergreen(self.green, self.t_now)  # amber + all-red first
+            self.pm.load_fixed_plan("B1_fixed78", start_phase=0)   # B1 begins at phi1
+            self.failsafe = True
+        elif (self.failsafe and self.valid >= self.p.recover_after
+              and self.pm.fixed_plan_at_start_of("phi1")):
+            self.failsafe = False
+        return not self.failsafe
+\end{lstlisting}
+
+\section*{D.2 Perception tracker (\texttt{sensing/perception\_tracker.py})}
+
+Two details matter here. A tentative track has no velocity estimate, so its second detection is associated
+with the wide \emph{initiation gate} $v_{\max}\Delta t \approx 20$~m rather than the steady-state 2.5~m gate;
+with a 2.5~m gate and $\hat{\mathbf{v}} = \mathbf{0}$, no vehicle faster than 2.5~m/s could ever be confirmed.
+Second, only tracks updated in the current scan are returned: unassociated tracks are still coasted
+internally so that they survive a dropout, but reporting them put stale objects into the controller's queue
+estimate.
+
+\begin{lstlisting}[style=py,caption={Two-point track initiation, $\alpha$--$\beta$ filtering, and withholding of coasting tracks},label={lst:app-tracker}]
+import numpy as np
+
+V_MAX = 20.0            # m/s, fastest credible approach speed
+
+class Track:
+    def __init__(self, tid, det, t):
+        self.id, self.p, self.v = tid, np.array([det.x, det.y]), np.zeros(2)
+        self.size, self.hits, self.misses, self.t = det.size, 1, 0, t
+        self.updated = True            # associated in the current scan?
+
+class PerceptionTracker:
+    def __init__(self, alpha=0.5, beta=0.1, gate=2.5, delete=3, dt=1.0):
+        self.a, self.b, self.gate, self.delete = alpha, beta, gate, delete
+        self.init_gate = V_MAX * dt    # ~20 m for the second detection
+        self.tracks: list[Track] = []
+        self.next_id = 0
+
+    def update(self, dets, t, dt=1.0):
+        if dets is None:
+            return None                                   # propagate sensor failure
+        for tr in self.tracks:
+            tr.pred = tr.p + tr.v * dt                    # prediction
+            tr.updated = False
+        free = set(range(len(dets)))
+        # established tracks first, then tentative ones with the wider gate
+        for tr in sorted(self.tracks, key=lambda k: -k.hits):
+            gate = self.gate if tr.hits >= 2 else self.init_gate
+            best, dmin = None, gate
+            for j in free:
+                d = np.hypot(dets[j].x - tr.pred[0], dets[j].y - tr.pred[1])
+                if d < dmin:
+                    best, dmin = j, d
+            if best is None:
+                tr.p, tr.misses = tr.pred, tr.misses + 1   # coast, do not report
+                continue
+            z = np.array([dets[best].x, dets[best].y])
+            if tr.hits == 1:
+                tr.v = (z - tr.p) / dt                    # two-point initiation
+                tr.p = z
+            else:
+                r = z - tr.pred                           # innovation
+                tr.p = tr.pred + self.a * r
+                tr.v = tr.v + (self.b / dt) * r
+            tr.size, tr.hits, tr.misses = dets[best].size, tr.hits + 1, 0
+            tr.updated = True
+            free.discard(best)
+        for j in free:                                    # new tentative tracks
+            self.tracks.append(Track(self.next_id, dets[j], t)); self.next_id += 1
+        self.tracks = [k for k in self.tracks if k.misses < self.delete]
+        # report only tracks seen this scan and confirmed by a second detection
+        return [map_match(k) for k in self.tracks if k.updated and k.hits >= 2]
+\end{lstlisting}
+
+\section*{D.3 Route-file writer (\texttt{extraction/export\_sumo.py})}
+
+\begin{lstlisting}[style=py,caption={Writing the \dtx{} demand as a \sumo{} route file},label={lst:app-export}]
+import pandas as pd
+from xml.sax.saxutils import quoteattr
+
+VTYPES = ["motorcycle", "threewheeler", "car", "van", "bus", "lorry", "bicycle"]
+
+def write_routes(trips: pd.DataFrame, routes: dict, session: str, path: str) -> None:
+    """trips: one row per uncensored or censored vehicle with movement, class, t_entry."""
+    share = trips.cls.value_counts(normalize=True).reindex(VTYPES, fill_value=0.0)
+    trips["bin"] = (trips.t_entry // 300).astype(int)          # 5-minute bins
+    counts = trips.groupby(["bin", "movement"]).size()
+    with open(path, "w") as f:
+        f.write('<routes>\n  <vTypeDistribution id="mix_%s">\n' % session)
+        for vt, p in share.items():
+            f.write('    <vType id="%s_%s" probability="%.4f"/>\n' % (vt, session, p))
+        f.write("  </vTypeDistribution>\n")
+        for mv, edges in routes.items():
+            f.write('  <route id=%s edges=%s/>\n' % (quoteattr(mv), quoteattr(edges)))
+        for (b, mv), n in counts.items():
+            f.write('  <flow id="%s_%02d" type="mix_%s" route=%s begin="%d" end="%d" '
+                    'vehsPerHour="%.1f" departLane="best" departSpeed="max"/>\n'
+                    % (mv, b, session, quoteattr(mv), b * 300, (b + 1) * 300, n * 12.0))
+        f.write("</routes>\n")
+\end{lstlisting}
+
+\section*{D.4 Phase-safety test (\texttt{tests/test\_phase\_safety.py})}
+
+\begin{lstlisting}[style=py,caption={pytest checking conflicting greens and intergreens on every step},label={lst:app-test}]
+import pytest
+from experiments.run_experiment import iter_states
+from control.phases import CONFLICTS          # pairs of link indices that must never both be G
+
+CONTROLLERS = ["B1", "B2", "B3", "PRISM", "PRISM_GT"]
+
+@pytest.mark.parametrize("ctrl", CONTROLLERS)
+@pytest.mark.parametrize("demand", [300, 500, 700])
+def test_no_conflicting_greens_and_full_intergreen(ctrl, demand):
+    prev, amber_since, red_since = None, None, None
+    for t, state in iter_states(ctrl, f"mock_{demand}", seed=1, horizon=1800):
+        green = {i for i, c in enumerate(state) if c in "Gg"}
+        for a, b in CONFLICTS:
+            assert not (a in green and b in green), f"{ctrl} t={t}: {a}/{b} green"
+        if "y" in state and (prev is None or "y" not in prev):
+            amber_since = t
+        if set(state) == {"r"} and prev and "y" in prev:
+            assert t - amber_since >= 3.0 - 1e-6, f"short amber at t={t}"
+            red_since = t
+        if prev and set(prev) == {"r"} and green:
+            assert t - red_since >= 2.0 - 1e-6, f"short all-red at t={t}"
+        if prev and green and any(c == "G" for c in prev):
+            assert green <= {i for i, c in enumerate(prev) if c == "G"}, \
+                f"green-to-green change without intergreen at t={t}"
+        prev = state
+\end{lstlisting}

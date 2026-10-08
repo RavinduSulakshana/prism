@@ -1,0 +1,109 @@
+\chapter{Introduction}\label{ch:intro}
+
+% ------------------------------------------------------------------
+\section{Background}\label{sec:intro-background}
+
+Road congestion is one of the most persistent and visible constraints on economic and social life in the Colombo Metropolitan Region (CMR). The Urban Transport System Development Project for the Colombo Metropolitan Region and Suburbs (CoMTrans), conducted by the Japan International Cooperation Agency together with the Ministry of Transport, documented a rapidly growing private vehicle fleet, a declining share of public transport and severe peak-period congestion on the radial and orbital corridors that feed the city, and projected that conditions would deteriorate further without substantial investment in both infrastructure and traffic management~\cite{jica2014comtrans}. Large infrastructure projects take many years and considerable capital to deliver; improving the way that \emph{existing} junctions are controlled is, by contrast, a comparatively low-cost intervention whose benefits accrue immediately to every road user who passes through.
+
+The majority of signalised junctions in the CMR are operated by \emph{fixed-time} controllers. A fixed-time plan repeats a predetermined cycle in which each phase receives a constant green interval, irrespective of how many vehicles are actually waiting. Such plans are classically derived from Webster's delay formula~\cite{webster1958} using historical flow surveys, and they perform reasonably when demand is stable and close to the design flows. In practice, however, demand at suburban Colombo junctions varies strongly within the hour and between days: school traffic, office shift changes, bus bunching and incidents on adjacent links all produce surges that a fixed plan cannot detect. The result is the familiar pattern in which one approach queues back hundreds of metres while the green is being given to an approach that is almost empty.
+
+Sri Lankan traffic adds a further layer of complexity. The national fleet is dominated by motorcycles and three-wheelers~\cite{dmt_stats}, which coexist on the same carriageway with cars, vans, private and state buses, and goods lorries. Lane discipline is weak: motorcycles and three-wheelers routinely filter laterally between larger vehicles and accumulate at the stop line, so that the composition at the head of a queue differs markedly from that further upstream. Conventional traffic-engineering tools that count \emph{vehicles} rather than road space consumed are therefore poorly matched to local conditions; a queue of twenty motorcycles and a queue of twenty buses occupy very different lengths and take very different times to discharge. The passenger car unit (PCU), which weights each vehicle class by its equivalent impact on capacity~\cite{irc106,hcm2016}, offers a more meaningful measure of demand in such heterogeneous streams.
+
+When fixed-time control fails visibly, Sri Lankan junctions frequently revert to \emph{manual} control: traffic police officers switch the signals to flashing or off and direct traffic by hand. Manual control can resolve local gridlock, because the officer observes queues directly and adapts, but it is labour-intensive, inconsistent between officers, hazardous for the officers themselves, and impossible to coordinate across neighbouring junctions. Its prevalence is nonetheless instructive: it demonstrates that \emph{responsiveness to observed queues} is precisely what the fixed-time controllers lack. Adaptive traffic signal control (ATSC) systems such as SCOOT~\cite{hunt1981scoot} and SCATS~\cite{sims1980scats} have provided this responsiveness in developed cities for decades, yet they rely on dense networks of inductive loops, proprietary hardware and lane-disciplined traffic, and have seen little adoption in Sri Lanka.
+
+% ------------------------------------------------------------------
+\section{Problem Statement}\label{sec:intro-problem}
+
+This research focuses on the Maviththara junction in Piliyandala, a four-arm signalised intersection on the Piliyandala bypass road in the Colombo District. Each arm carries two inbound and two outbound lanes without dedicated turning pockets, and because Sri Lanka drives on the left, right-turning vehicles must cross the opposing through stream. The junction is therefore operated with four-phase \emph{split} phasing in which each approach receives its own exclusive green. Observation of the drone footage collected for this study showed that the existing controller runs a fixed cycle of \est{120~s} with greens of \est{32}, \est{24}, \est{32} and \est{12}~s for the North, East, South and West approaches respectively, each followed by an amber and all-red interval. The plan is completely blind to demand: the same green is given at 07:15, when the morning peak saturates the main approaches, as at 13:45, when traffic is moderate. Average waiting times measured from the footage under this plan reached \est{104.7~s} per vehicle in the morning peak and \est{46.3~s} in the early afternoon, and police manual control is a recurring feature of the morning period.
+
+Making the junction adaptive requires two things: \emph{sensing}, so that the controller knows how much traffic is waiting and arriving on each approach, and a \emph{control law}, which converts that knowledge into timing decisions that are safe, efficient and fair. Inductive loops are poorly suited to the problem, because they measure presence at a point rather than queue extent, they cannot reliably detect motorcycles filtering between lanes, and installation requires cutting the road surface. Video cameras are cheaper but suffer under glare, rain and night-time conditions and raise privacy concerns because they capture faces and number plates. A roadside 360\textdegree{} LiDAR sensor mounted on a pole at the junction offers direct three-dimensional measurement of every object within tens of metres~\cite{zhao2019lidar,lv2019lidar}, but such sensors are expensive, and it would be irresponsible to procure and install one before demonstrating that a LiDAR-driven controller would deliver a worthwhile benefit at this specific site.
+
+The problem addressed by this dissertation is therefore: \emph{how can an adaptive, LiDAR-driven signal controller suited to heterogeneous Sri Lankan traffic be designed and its benefit at the Maviththara junction be credibly quantified before any physical sensor is deployed?} The answer adopted is a simulation-first approach in which a microscopic model of the junction is calibrated against real drone observations, a realistic software model of a LiDAR sensor replaces the physical device, and a transparent, mathematically defined controller is evaluated against the existing plan and other credible baselines.
+
+% ------------------------------------------------------------------
+\section{Motivation}\label{sec:intro-motivation}
+
+The motivation for this work is at once personal and societal. Consider a commuter who leaves home in Piliyandala at 07:00 to reach a workplace in Colombo. A substantial portion of the journey time is spent not in motion but stationary at a sequence of signalised junctions, each running its own fixed plan in isolation, and Maviththara is one of the first. Every unnecessary second of red time at that junction is multiplied by the thousands of vehicles that pass through it in each peak hour, and by the occupants of every bus, three-wheeler and car. The cumulative cost in lost productivity, fuel and emissions is considerable, and it is borne disproportionately by public-transport users whose buses queue alongside private vehicles.
+
+The longer-term vision that motivates the project extends well beyond a single junction. If every major junction in the CMR were equipped with a sensor that observed its queues directly and a controller that responded to them, neighbouring junctions could exchange predicted platoons, and a city-level service could publish predicted delays at each junction. A commuter leaving home could then be offered not merely the shortest route but the route with the minimum expected time given current and predicted signal states. The decentralised max-pressure family of controllers~\cite{varaiya2013maxpressure,tassiulas1992}, on which the controller in this dissertation builds, is attractive for such a vision precisely because it requires only local information yet carries network-level throughput guarantees. This dissertation is the first, single-junction step towards that goal, and is deliberately designed so that its components (extraction, sensing and control) can be reused at other sites.
+
+The choice of LiDAR rather than cameras as the target sensor is also deliberately motivated. A LiDAR point cloud records geometry rather than appearance: it captures the shape, position and velocity of a vehicle but not the faces of its occupants or the characters on its number plate. A controller that depends only on such data is privacy-preserving by construction, which is an important consideration for public acceptance of roadside sensing in Sri Lanka. LiDAR is also largely insensitive to illumination, functioning equally at night and under strong tropical sunlight. Finally, a conscious choice was made to keep artificial intelligence out of the control loop: machine learning is used only offline to detect vehicles in drone video, while the signal-control decision is computed by an explicit mathematical formula whose behaviour can be inspected, explained to a traffic engineer and bounded by hard safety constraints.
+
+% ------------------------------------------------------------------
+\section{Aim}\label{sec:intro-aim}
+
+The aim of this research is to design, implement and evaluate \prism{}, a pressure-based adaptive traffic signal controller that uses passenger-car-unit weighted state estimates from a simulated roadside LiDAR sensor to reduce vehicle waiting time at the Maviththara junction under heterogeneous Sri Lankan traffic, using a microscopic simulation model calibrated against real drone observations.
+
+% ------------------------------------------------------------------
+\section{Objectives}\label{sec:intro-objectives}
+
+To achieve this aim, the following objectives were defined:
+\begin{enumerate}[label=\textbf{O\arabic*}, leftmargin=*, itemsep=2pt]
+  \item To critically review the literature on fixed-time, actuated, adaptive and pressure-based signal control, reinforcement-learning approaches, roadside LiDAR sensing, drone-based traffic data collection and the modelling of heterogeneous traffic, and to identify the gap addressed by this work.
+  \item To collect high-resolution aerial video of the Maviththara junction by drone during a congested morning peak and a moderate afternoon period, in compliance with civil aviation regulations and with due regard to privacy.
+  \item To design and implement \dtx{}, a drone trajectory extraction pipeline that stabilises the video, detects and classifies seven Sri Lankan vehicle classes, tracks them, converts pixel positions to metric coordinates and derives demand, turning ratios, saturation flow, queue lengths and per-vehicle waiting times.
+  \item To build a microscopic SUMO model of the junction with a sublane representation of motorcycle and three-wheeler filtering, and to calibrate it against the \dtx{} observations using the GEH statistic and waiting-time error.
+  \item To design and implement \vls{}, a virtual LiDAR sensor that reproduces range-dependent noise, dropout, occlusion, size-based class confusion and false positives, so that the controller is evaluated under realistic rather than perfect perception.
+  \item To design and implement \prism{}, a purely mathematical controller that combines PCU-weighted max-pressure, a starvation-urgency multiplier, queue-clearance green-time bounds, hysteresis, a spillback guard and a fixed-time fail-safe.
+  \item To evaluate \prism{} against the existing fixed-time plan, SUMO actuated control and a Webster-optimised plan across multiple random seeds and demand scenarios, test statistical significance, and analyse sensitivity to sensor imperfection and controller parameters.
+\end{enumerate}
+
+% ------------------------------------------------------------------
+\section{Research Questions}\label{sec:intro-rq}
+
+The investigation was structured around four research questions:
+\begin{description}[leftmargin=1.2cm, style=nextline, itemsep=3pt]
+  \item[RQ1] To what extent can trajectories, demand and waiting times extracted automatically from nadir drone video calibrate a microscopic simulation of a heterogeneous Sri Lankan junction to an accepted standard of fidelity?
+  \item[RQ2] Can a PCU-weighted, pressure-based controller that observes the junction only through a simulated LiDAR sensor reduce average vehicle waiting time relative to the existing fixed-time plan, actuated control and an optimised fixed-time plan, under both moderate and heavy demand?
+  \item[RQ3] How sensitive is the performance of such a controller to realistic LiDAR imperfections, in particular position noise, detection dropout and occlusion by large vehicles?
+  \item[RQ4] Does the controller maintain fairness between approaches and vehicle classes, and what are its effects on secondary measures such as travel time, queue length, throughput, stops and CO$_2$ emissions?
+\end{description}
+
+% ------------------------------------------------------------------
+\section{Scope and Delimitations}\label{sec:intro-scope}
+
+The scope of the research was deliberately bounded so that each component could be built and evaluated rigorously within an undergraduate project timeframe:
+\begin{itemize}[itemsep=2pt]
+  \item \textbf{Single junction.} Only the Maviththara junction was modelled, with approximately 400~m of each arm. Network effects such as spillback from adjacent junctions were represented only through the boundary conditions observed in the footage; coordination with neighbouring signals is left to future work.
+  \item \textbf{Simulation only.} No physical LiDAR sensor was installed and no live signal was controlled. All controller evaluation took place in SUMO~\cite{lopez2018sumo}, with the LiDAR represented by \vls{}.
+  \item \textbf{Two observation sessions.} Real data were collected by drone on a single weekday, 2~October~2026, in a morning peak session (07:00--08:00) and an afternoon session (13:30--14:30). Weekends, rainy conditions and night-time periods were not observed.
+  \item \textbf{Vehicles only.} Pedestrians were not modelled in depth. A pedestrian minimum-green parameter is included in the controller for completeness but was not exercised in the experiments.
+  \item \textbf{Police manual control not simulated.} Manual control by traffic police was observed and is discussed as motivation and as a limitation of the comparison, but it was not modelled, because an officer's decisions cannot be reproduced reliably in simulation.
+  \item \textbf{Fixed phase structure.} The four-phase split structure of the existing junction was retained for all controllers so that differences in performance can be attributed to timing decisions rather than to changes in phase design or geometry.
+\end{itemize}
+
+% ------------------------------------------------------------------
+\section{Contributions}\label{sec:intro-contributions}
+
+This dissertation makes the following contributions:
+\begin{enumerate}[itemsep=2pt]
+  \item \textbf{\dtx{}}, an end-to-end pipeline that converts nadir drone video of a heterogeneous junction into georeferenced trajectories and calibration-ready quantities, including a per-vehicle waiting-time definition that is consistent with the waiting-time definition used by SUMO, so that observed and simulated waiting times are directly comparable.
+  \item A \textbf{calibrated sublane SUMO model} of a Sri Lankan junction with seven locally relevant vehicle classes, adopted PCU values, and motorcycle and three-wheeler filtering behaviour.
+  \item \textbf{\vls{}}, a reusable virtual LiDAR model with an explicit, parameterised error model, allowing the cost of imperfect perception to be quantified separately from the control law through comparison with a ground-truth oracle.
+  \item \textbf{\prism{}}, a transparent, PCU-weighted max-pressure controller extended with a quadratic starvation-urgency term, queue-clearance green-time bounds, hysteresis, a spillback guard and a fail-safe, designed specifically for split-phased junctions with heterogeneous traffic.
+  \item A \textbf{reproducible evaluation} against three baselines with paired random seeds, held-out evaluation seeds, non-parametric significance testing and sensitivity analyses of sensor and controller parameters.
+\end{enumerate}
+
+% ------------------------------------------------------------------
+\section{Research Approach Overview}\label{sec:intro-approach}
+
+The research followed a quantitative, design-and-evaluate approach, described in detail in \cref{ch:method}. An important feature of the approach is the \emph{order} in which data were used. Because the drone flights could only be scheduled late in the project, all components were first developed and verified using \emph{mock data}: synthetic demand of 300, 500 and 700~veh/h per approach, split evenly across the four approaches, with fixed turning ratios and a vehicle mix approximating the national registration profile. The mock-data phase allowed the SUMO network, the virtual LiDAR and the controller to be built, unit-tested for safety (for example, that conflicting greens could never be displayed) and tuned before any real data existed. Only in the final phase did the real demand extracted by \dtx{} from the drone footage replace the mock demand, after which the simulation model was calibrated and the definitive experiments were run. This ordering reduced project risk, since development did not stall while awaiting data, and also provided an internal check: a controller that performed well only on symmetric mock demand but not on real, asymmetric demand would have been exposed by the final phase.
+
+% ------------------------------------------------------------------
+\section{Structure of the Report}\label{sec:intro-structure}
+
+The remainder of this dissertation is organised as follows.
+
+\Cref{ch:lit} reviews the literature on traffic signal control, from Webster's fixed-time theory through actuated and adaptive systems such as SCOOT and SCATS to max-pressure control and reinforcement learning, and surveys roadside LiDAR sensing, drone-based trajectory datasets, object detection and tracking, and the simulation of heterogeneous traffic, concluding with the research gap.
+
+\Cref{ch:method} sets out the research philosophy and design, the development methodology, the functional and non-functional requirements, the data-collection procedure, the mock-data and experimental designs, the evaluation metrics and statistical tests, threats to validity, project management, and the ethical, legal, social and professional issues.
+
+\Cref{ch:design} presents the design of the system: the overall architecture, the \dtx{} extraction pipeline (\cref{sec:dtx}), the virtual LiDAR sensor (\cref{sec:vls}) and the \prism{} control algorithm (\cref{sec:prism}), including the pressure formulation, decision procedure and safety constraints.
+
+\Cref{ch:impl} describes the implementation of these designs in Python, including the detector fine-tuning, the SUMO network construction and calibration, the TraCI integration, the baseline controllers and the experiment harness.
+
+\Cref{ch:eval} reports the testing strategy and the evaluation results (\cref{sec:results}), comparing \prism{} with the three baselines across the mock, afternoon and morning scenarios, and analysing sensitivity to sensor and controller parameters.
+
+\Cref{ch:conclusion} answers the research questions, reflects on the limitations of the study and outlines future work (\cref{sec:futurework}), including city-scale deployment, coordination between junctions and commuter route guidance.
+
+The appendices contain the full parameter table (\cref{app:params}), selected code listings (\cref{app:code}) and supporting material.

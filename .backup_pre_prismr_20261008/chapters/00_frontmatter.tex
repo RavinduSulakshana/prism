@@ -1,0 +1,87 @@
+% ==================================================================
+% Front matter: inner title page (Senate Appendix II), declaration
+% (Senate Appendix III), acknowledgement, abstract
+% ==================================================================
+
+% ------------------------------------------------------------------
+% Inner title page — page i (number not shown)
+% ------------------------------------------------------------------
+\begin{titlepage}
+\thispagestyle{empty}
+\begin{center}
+\onehalfspacing
+\vspace*{0.2cm}
+{\fontsize{16}{24}\selectfont\bfseries PRISM: A LIDAR-DRIVEN, PCU-WEIGHTED PRESSURE-BASED ADAPTIVE TRAFFIC SIGNAL CONTROLLER FOR HETEROGENEOUS SRI LANKAN TRAFFIC - A DRONE-CALIBRATED SUMO STUDY OF THE MAVITHTHARA JUNCTION\par}
+
+\vspace{1.4cm}
+{\fontsize{14}{21}\selectfont
+A thesis submitted to NSBM Green University for the degree of\\
+Bachelor of Science (Honours) in Computer Science\par
+\vspace{1.0cm}
+By\par
+\vspace{1.0cm}
+P R S PERERA\par
+(29243)\par
+\vspace{1.4cm}
+Department of Computer \& Data Science\\
+Faculty of Computing\\
+NSBM Green University\\
+Sri Lanka\par
+\vspace{1.0cm}
+October 2026\par}
+\end{center}
+\end{titlepage}
+\setcounter{page}{2}
+
+% ------------------------------------------------------------------
+% Declaration — page ii
+% ------------------------------------------------------------------
+\chapter*{Declaration}
+\addcontentsline{toc}{chapter}{Declaration}
+
+I declare that the content of this undergraduate thesis titled ``PRISM: A LiDAR-Driven, PCU-Weighted Pressure-Based Adaptive Traffic Signal Controller for Heterogeneous Sri Lankan Traffic --- A Drone-Calibrated SUMO Study of the Maviththara Junction'' is my own work and this dissertation does not incorporate without acknowledgement any material previously submitted for any other degree in any university or institution of higher learning.
+
+\vspace{1.4cm}
+\noindent
+\begin{tabular}{@{}l@{\hspace{0.6em}}l@{}}
+Signature: & \rule{0.45\textwidth}{0.4pt}\\[1.0em]
+Name: & P R S Perera (29243)\\[1.0em]
+Date: & \rule{0.30\textwidth}{0.4pt}\\
+\end{tabular}
+
+\vspace{2.6cm}
+\noindent\rule{0.45\textwidth}{0.4pt}\\
+Signature of the Supervisor\\[0.3em]
+Mrs. Hirushi Dilpriya\\
+Principal Supervisor\\
+Lecturer\\
+Department of Computer \& Data Science\\
+NSBM Green University
+
+\vspace{1.0cm}
+\noindent Date: \rule{0.30\textwidth}{0.4pt}
+
+% ------------------------------------------------------------------
+% Acknowledgement
+% ------------------------------------------------------------------
+\chapter*{Acknowledgement}
+\addcontentsline{toc}{chapter}{Acknowledgement}
+
+The author wishes to express sincere gratitude to the supervisor of this research, Mrs.\ Hirushi Dilpriya, Lecturer in the Faculty of Computing, NSBM Green University, for her continuous guidance, patience and constructive feedback from the first proposal to the final draft. Her insistence on grounding an ambitious idea in careful measurement and honest evaluation shaped every chapter of this thesis.
+
+The drone survey on which this work rests would not have been possible without Mr.\ A M Lakshitha Chulanga Bandara, the CAASL-registered drone operator who planned and flew both recording sessions at the Maviththara junction with great care and professionalism. The author is equally grateful to Mr.\ Ravindu Sulakshana, a fellow undergraduate, whose persistence in preparing letters and following up with the authorities was instrumental in obtaining the permissions required for the survey.
+
+The author gratefully acknowledges the Piliyandala Traffic Police and the Road Development Authority for discussing the operational problems of the junction, for supporting this research and for authorising the aerial survey, as well as the Civil Aviation Authority of Sri Lanka and the Ministry of Defence for granting the necessary approvals.
+
+Thanks are also due to the lecturers and academic staff of the Faculty of Computing, NSBM Green University, whose teaching provided the foundation on which this work was built. Finally, the author owes the deepest thanks to family members, whose daily journeys through Piliyandala traffic first inspired this research and whose support and encouragement made its completion possible.
+
+% ------------------------------------------------------------------
+% Abstract (200–300 words)
+% ------------------------------------------------------------------
+\chapter*{Abstract}
+\addcontentsline{toc}{chapter}{Abstract}
+
+Signalised junctions in the Colombo District are still operated by fixed-time plans that cannot respond to fluctuating, highly heterogeneous demand in which motorcycles and three-wheelers filter between cars, buses and lorries; when queues grow excessive, traffic police switch the signals off and direct traffic manually. This research designed, implemented and evaluated PRISM (Pressure-based Real-time Intersection Signal Management), an adaptive signal controller for the Maviththara junction on the Piliyandala bypass. A drone survey under police, Ministry of Defence and Civil Aviation Authority approval recorded morning-peak and afternoon traffic, and a Drone Trajectory eXtractor combining frame stabilisation, a fine-tuned YOLOv8s detector with sliced inference, ByteTrack tracking and homography-based georeferencing converted the video into vehicle trajectories, demand, turning ratios, saturation flow and waiting times. These data calibrated a sublane SUMO model of the junction. A Virtual LiDAR Sensor reproduced the noise, dropout and occlusion of a pole-mounted LiDAR and supplied the only input to PRISM, whose control law is purely mathematical: a passenger-car-unit weighted max-pressure score with a quadratic starvation-urgency term, hysteresis, gap-out and spillback protection. Over ten held-out random seeds, PRISM reduced average waiting time per vehicle relative to the existing 78-second fixed-time plan by \est{18.8\%} under moderate demand and \est{11.4\%} under heavy demand, outperformed actuated and Webster-optimised control, and lowered the share of cycles that would trigger manual police control from \est{31\%} to \est{19\%}. Performance degraded gracefully under sensor imperfections. The results indicate that privacy-preserving LiDAR sensing combined with a transparent pressure-based control law is a viable path to adaptive signal control at Sri Lankan junctions.
+
+\vspace{0.4cm}
+\noindent\textbf{Keywords:} adaptive traffic signal control, max-pressure, LiDAR, heterogeneous traffic, passenger car unit, drone video analytics, SUMO, Sri Lanka

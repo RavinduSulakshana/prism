@@ -1,0 +1,137 @@
+% ==================================================================
+% Appendix B — Full parameter table   (writer W5)
+% ==================================================================
+\chapter{Full Parameter Table}\label{app:params}
+
+This appendix lists every parameter of the artefact. Design parameters chosen by the author are
+printed plainly; values that were measured or estimated from the drone data are highlighted and must be
+replaced by the final measurements. Justifications for the \prism{} values are discussed in
+\cref{sec:impl-prism}.
+
+{\small
+\renewcommand{\arraystretch}{1.1}
+\begin{longtable}{@{}>{\raggedright\arraybackslash}p{3.5cm}>{\raggedright\arraybackslash}p{1.6cm}>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}p{1.3cm}>{\raggedright\arraybackslash}p{4.5cm}@{}}
+\caption{Complete parameter list of \dtx{}, \sumo{}, \vls{}, \prism{}, baselines and experiments}\label{tab:app-params}\\
+\toprule
+Parameter & Symbol & Value & Unit & Source / justification\\
+\midrule
+\endfirsthead
+\toprule
+Parameter & Symbol & Value & Unit & Source / justification\\
+\midrule
+\endhead
+\midrule \multicolumn{5}{r}{\footnotesize continued on next page}\\
+\endfoot
+\bottomrule
+\endlastfoot
+\multicolumn{5}{@{}l}{\textit{DTX - drone trajectory extraction}}\\
+Video resolution / rate & -- & 3840$\times$2160 / 30 & px / fps & DJI Mini 2 4K mode\\
+Processing rate & -- & 10 & fps & Every third frame; adequate for 0.1 s timing\\
+Flight altitude & -- & \est{$\approx$90} & m & Below 122 m (400 ft) legal limit\\
+Stabilisation & -- & ORB + RANSAC & -- & Removes hover drift~\cite{rublee2011orb,fischler1981ransac}\\
+Detector & -- & YOLOv8s & -- & VisDrone2019-DET initialisation~\cite{zhu2022visdrone}\\
+Annotated frames & -- & \est{450} & frames & 70/15/15 split, 7 classes\\
+Training epochs / image size & -- & 100 / 1280 & -- / px & Colab T4\\
+SAHI tiling & -- & 2$\times$2, overlap 0.2 & -- & Motorcycles $\approx$20 px~\cite{akyon2022sahi}\\
+ByteTrack thresholds & -- & 0.5 / 0.8 & -- & Track / match threshold~\cite{zhang2022bytetrack}\\
+ByteTrack buffer & -- & 30 & frames & Re-links tracks after short occlusion\\
+Control points & -- & $\geq$4 & points & Ground-plane homography\\
+Lane width & -- & 3.5 & m & Measured; scale reference\\
+GSD & -- & \est{2.6} & cm/px & Measured\\
+Reprojection error & -- & \est{0.18} & m & Measured on held-out points\\
+Savitzky--Golay window / order & -- & 11 / 2 & samples & Smooths jitter without lag~\cite{savitzky1964}\\
+Waiting-speed threshold & -- & 0.1 & m/s & Identical to \sumo{} \texttt{waitingTime}\\
+Aggregation bin & -- & 5 & min & Route-file resolution\\
+Discharge headway start & -- & 4th vehicle & -- & Excludes start-up loss~\cite{hcm2016}\\
+Saturation flow & $s$ & \est{1850} & PCU/h per lane & Measured from discharge headways\\
+Free-flow speed & $v_{\text{free}}$ & \est{38} & km/h & Measured\\
+Kerb-lane share of through traffic & $f_k$ & \est{0.75} & -- & Measured; used for B3 critical lane flow\\
+\midrule
+\multicolumn{5}{@{}l}{\textit{SUMO model}}\\
+SUMO version & -- & \est{1.20.0} & -- & Latest stable at time of work\\
+Driving side & -- & left & -- & \texttt{netconvert --lefthand}\\
+Lanes per arm & -- & 2 in + 2 out & -- & Site survey\\
+Slip lanes & -- & 4, yield & -- & Unsignalised; not in TLS\\
+Step length & -- & 0.5 & s & Stable sublane dynamics\\
+Lateral resolution & -- & 0.8 & m & Sublane model~\cite{sumo_sublane}\\
+Car-following model & -- & Krauss & -- & \cite{krauss1998}\\
+Driver imperfection & $\sigma$ & 0.5 & -- & Calibrated range\\
+Reaction time & $\tau$ & 1.0 & s & Calibrated range\\
+Motorcycle \texttt{minGapLat} & -- & 0.3 & m & Filtering between vehicles\\
+Speed factor & -- & normc(1, 0.1) & -- & Speed heterogeneity\\
+Warm-up / measurement & -- & 300 / 3600 & s & Warm-up discarded\\
+Seeds (tuning / evaluation) & -- & 1--5 / 6--15 & -- & No tuning on evaluation seeds\\
+Mock demand per approach & -- & 300 / 500 / 700 & veh/h & Development scenarios\\
+Mock turning shares & -- & 25 / 50 / 25 & \% & Left / through / right\\
+Mock composition & -- & 40/20/25/7/5/3 & \% & Moto/3W/car/van/bus/lorry\\
+Morning demand & -- & \est{3,420} (\est{3,150}) & veh/h (PCU/h) & \dtx{}\\
+Afternoon demand & -- & \est{2,280} (\est{2,085}) & veh/h (PCU/h) & \dtx{}\\
+\midrule
+\multicolumn{5}{@{}l}{\textit{Vehicle types (length m / PCU / max km/h / accel m/s$^2$)}}\\
+Motorcycle & -- & 2.0 / 0.5 / 70 / 2.8 & -- & \texttt{motorcycle}, high \texttt{lcSublane}\\
+Three-wheeler & -- & 2.7 / 0.8 / 50 / 1.8 & -- & Custom type, width 1.4 m\\
+Car & -- & 4.5 / 1.0 / 70 / 2.6 & -- & \texttt{passenger}\\
+Van/SUV & -- & 5.0 / 1.0 / 70 / 2.6 & -- & \texttt{delivery}\\
+Bus & -- & 11.5 / 3.0 / 60 / 1.2 & -- & \texttt{bus}\\
+Lorry & -- & 8.5 / 2.5 / 55 / 1.3 & -- & \texttt{truck}\\
+Bicycle & -- & 1.8 / 0.3 / 20 / 1.2 & -- & \texttt{bicycle}\\
+\midrule
+\multicolumn{5}{@{}l}{\textit{VLS — virtual LiDAR}}\\
+Mounting height & -- & 6 & m & Junction-centre pole\\
+Range & $R$ & 75 & m & Comparable to OS1-32~\cite{ouster_os1}\\
+Scan period & -- & 1 & s & Equal to decision period\\
+Noise (constant / slope) & $\sigma_0$, $\sigma_1$ & 0.10 / 0.002 & m / -- & $\sigma(r)=\sigma_0+\sigma_1 r$\\
+Dropout & $p_{\text{miss}}$ & $0.01+0.04(r/R)^2$ & -- & Beam thinning with range\\
+Occluder height & -- & $\geq$2.5 & m & Buses and lorries\\
+Occlusion overlap & -- & $\geq$0.7 & -- & Of target angular extent\\
+Clutter rate & $\lambda$ & 0.2 & per scan & Poisson\\
+Size thresholds & -- & 3.2 / 6.0 & m & Small / medium / large\\
+Size-class PCU & -- & 0.6 / 1.0 / 2.8 & PCU & Small / medium / large\\
+Association gate & -- & 2.5 & m & Nearest neighbour\\
+$\alpha$--$\beta$ gains & $\alpha$, $\beta$ & 0.5 / 0.1 & -- & Constant-gain filter\\
+Confirm / delete & -- & 2 hits / 3 misses & -- & Clutter suppression\\
+\midrule
+\multicolumn{5}{@{}l}{\textit{PRISM controller}}\\
+Arrival weight & $\gamma$ & 0.5 & -- & \cref{eq:pressure}\\
+Exit-occupancy weight & $\delta$ & 0.6 & -- & \cref{eq:pressure}\\
+Urgency gain & $\kappa$ & 1.5 & -- & \cref{eq:urgency}\\
+Hysteresis ratio & $\theta$ & 0.25 & -- & Pressure switch\\
+Hysteresis margin & $\varepsilon$ & 2 & PCU & Pressure switch\\
+Discharge ratio & $\rho$ & 0.6 & -- & Pressure switch\\
+Arrival horizon & $H$ & 10 & s & $A_m$\\
+Gap time & $\tau_{\text{gap}}$ & 3 & s & Gap-out\\
+Gap-out queue threshold & -- & 0.5 & PCU & Gap-out\\
+Queue speed threshold & -- & 1.4 & m/s & $Q_m$ ($\approx$5 km/h)\\
+Start-up lost time & $l_s$ & 2.0 & s & \cref{eq:greq}\\
+Headway per PCU & $h_s$ & 1.95 & s/PCU & $3600/1850$\\
+Lanes per phase & $n_{\text{lanes}}$ & 4 / 2 & lanes & Through / right phase\\
+Minimum green & $G_{\min}$ & 10 / 5 & s & Through / right\\
+Maximum green & $G_{\max}$ & 50 / 25 & s & Through / right\\
+Starvation cap & $T_{\text{starve}}$ & 120 & s & Fairness override\\
+Amber / all-red & -- & 3 / 2 & s & As existing signal\\
+Decision period & $\Delta$ & 1 & s & Two simulation steps\\
+Exit capacity & $C_b$ & 23 & PCU & $2\times75/6.5$\\
+Spillback threshold & -- & 0.85 & -- & $O_b/C_b$\\
+Fail-safe trigger / recovery & -- & 5 / 10 & scans & Missing / valid scans\\
+Pedestrian minimum green & -- & 15 & s & Parameter only (future work)\\
+Fairness bound & $R^{\text{worst}}$ & 175 & s & $T_{\text{starve}}+G_{\max}+5$\\
+\midrule
+\multicolumn{5}{@{}l}{\textit{Baselines}}\\
+B1 greens $\phi_1$--$\phi_4$ & -- & 21/8/15/\est{14} & s & Observed; cycle 78 s\\
+B2 minDur / maxDur & -- & 10/5, 50/25 & s & Through/right; max gap 3 s~\cite{sumo_actuated}\\
+B3 lost time & $L$ & 20 & s & $4\times(3+2)$\\
+B3 morning $Y$ / cycle & -- & \est{0.700} / \est{117} & -- / s & Greens \est{54/13/19/11} s\\
+B3 afternoon $Y$ / cycle & -- & \est{0.477} / \est{67} & -- / s & Greens \est{23/6/12/6} s\\
+PRISM-GT sensor & -- & ground truth & -- & No noise, dropout or occlusion\\
+\midrule
+\multicolumn{5}{@{}l}{\textit{Experiments}}\\
+Scenarios & -- & mock 300/500/700, A, M & -- & \texttt{scenarios.yaml}\\
+Runs per scenario and controller & -- & 10 & seeds & Evaluation seeds 6--15\\
+Statistical test & -- & Wilcoxon signed-rank & -- & Paired by seed~\cite{wilcoxon1945}\\
+Noise sweep $\sigma_0$ & -- & 0, 0.1, 0.3, 0.5, 1.0 & m & Sensitivity\\
+Dropout sweep & -- & 0, 0.05, 0.1, 0.2, 0.3 & -- & Sensitivity\\
+$\theta$ sweep & -- & 0, 0.1, 0.25, 0.5 & -- & Sensitivity\\
+$G_{\max}$ (through) sweep & -- & 40, 50, 60, 75 & s & Sensitivity\\
+Emission model & -- & HBEFA4 & -- & \cite{hbefa41}\\
+\end{longtable}
+}

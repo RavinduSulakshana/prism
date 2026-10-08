@@ -1,0 +1,464 @@
+\chapter{Testing and Evaluation}\label{ch:eval}
+
+% =====================================================================
+\section{Chapter overview}
+
+This chapter reports how the three software components built in this research---the Drone Trajectory eXtractor (\dtx{}), the Virtual LiDAR Sensor (\vls{}) and the Pressure-based Real-time Intersection Signal Management (\prism{}) controller---were verified and then evaluated against the objectives of \cref{sec:intro-objectives}. Following the development order of \cref{ch:method}, components were verified in isolation, exercised in closed loop on mock demand, and finally evaluated on drone-extracted demand. Unless stated otherwise, every simulation result is the mean over evaluation seeds 6--15 (300~s warm-up, 3,600~s measured).
+
+% =====================================================================
+\section{Test plan and test cases}\label{sec:eval-plan}
+
+Because an erroneous \prism{} decision could display conflicting greens, correctness was established bottom-up before any performance claim; a layered strategy was preferred to a single end-to-end evaluation, which would have hidden the origin of defects. Four test levels were used (\cref{tab:eval-levels}). Unit tests targeted functions whose correct output can be derived by hand; integration tests coupled Simulation of Urban MObility (\sumo{}), the Traffic Control Interface (TraCI), the \vls{} and the controller on short scenarios; system tests ran complete one-hour experiments with safety invariants asserted at every step; and acceptance testing compared the outcomes with objectives O3--O7.
+
+\begin{table}[htbp]
+\centering
+\caption{Test levels, tools and environment.}
+\label{tab:eval-levels}
+\small
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+Level & Scope and method & Tools \\
+\midrule
+Unit & Single functions with hand-derived oracles; statistical tests for the \vls{} error model & \texttt{pytest}, \texttt{pytest-cov}, NumPy, SciPy \\
+Integration & \sumo{}--TraCI--\vls{}--controller loop on 600~s mock scenarios; fault injection & \sumo{} \est{1.20.0}, TraCI \\
+System & One-hour closed-loop runs, all controllers and seeds, invariants asserted every step & libsumo, \texttt{run\_experiment.py} \\
+Acceptance & Key Performance Indicators (KPIs) compared with objectives and stakeholder needs & Pandas, SciPy, Matplotlib \\
+\midrule
+Environment & \multicolumn{2}{>{\raggedright\arraybackslash}X}{Python 3.11 on the author's laptop (\cref{tab:intro-hardware}); detector evaluation on a Google Colab T4 Graphics Processing Unit (GPU)} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The unit-test suite comprised \est{62} test functions and achieved \est{87\%} statement coverage of the \texttt{control/} and \texttt{sensing/} packages; it was re-run after every change, preventing regressions during tuning. Ten principal test cases (TC01--TC10) are reported in \cref{tab:eval-tc}, each linked to the functional (FR) and non-functional (NFR) requirements of \cref{sec:srs-requirements}; a further twenty cases (TC11--TC30) are listed in \cref{app:tests}.
+
+\begin{table}[p]
+\centering
+\caption{Principal test cases (TC01--TC10).}
+\label{tab:eval-tc}
+\scriptsize
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{3pt}
+\begin{tabularx}{\textwidth}{@{}l>{\raggedright\arraybackslash}p{2.3cm}>{\raggedright\arraybackslash}p{1.15cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X c@{}}
+\toprule
+ID & Description & FR/NFR & Input & Expected & Actual & Status \\
+\midrule
+TC01 & Phase safety and closed-loop invariant & FR10, FR11, NFR02 & \est{10{,}000} random state vectors; all closed-loop runs & Only one of $\phi_1$--$\phi_4$ green at any instant; no conflicting signal state & \est{0} conflicting states; \est{0} collisions & Pass \\
+TC02 & Intergreen, $G_{\min}$ and $G_{\max}$ & FR11 & Zero demand on $\phi_1$; saturated $\phi_1$ & Hold to 10~s; terminate at 50~s; 3~s amber + 2~s all-red after every green & 10~s / 50~s; intergreen on \est{100\%} of transitions & Pass \\
+TC03 & Gap-out & FR10, FR11 & $\sum Q \le 0.5$ PCU on $\phi_3$, no object with ETA $\le 3$~s & Terminate at first step with $t_g \ge G_{\min}$ & Terminated at $t_g = 10$~s & Pass \\
+TC04 & Pressure switch with hysteresis & FR10 & \est{24} boundary cases around $S_j = 1.25\,S_g + 2$ and $t_g = 0.6\,G_{\text{req}}$ & Switch only if both conditions hold & Correct in \est{24/24} & Pass \\
+TC05 & Starvation override & FR12 & $\phi_4$ given near-zero pressure under heavy $\phi_1$/$\phi_3$ demand & $\phi_4$ served once $R_{\phi_4} \ge 120$~s & Served; longest red \est{128~s} ($\le 175$~s bound) & Pass \\
+TC06 & Sensor fail-safe & FR13, NFR03 & \vls{} output removed for 600~s & Revert to 78~s observed plan after 5 empty scans & Reverted at 5th empty scan & Pass \\
+TC07 & Spillback guard & FR14 & Exit link of $\phi_1$ blocked to $O_b/C_b = 0.87$ & Phases feeding the exit held to $G_{\min}$ & $\phi_1$ ended at 10~s & Pass \\
+TC08 & \vls{} noise and dropout statistics & FR08, NFR03 & $10^5$ scans at $r = 50$~m and $r = 75$~m & $\sigma(50) = 0.20$~m; $p_{\text{miss}}(75) = 0.05$ & \est{0.201~m}; \est{0.0497} & Pass \\
+TC09 & \dtx{} waiting time on synthetic tracks & FR05 & Track halting 20~s with jitter below 0.1~m/s & $W = 20.0$~s & \est{20.0~s} & Pass \\
+TC10 & Computational performance & NFR01, NFR06 & Afternoon scenario, one simulated hour & Decision $\le 10$~ms; hour $\le 180$~s & \est{0.4/2.1~ms} mean/max; \est{95~s} & Pass \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Non-functional testing}\label{sec:eval-nonfunctional}
+
+\textit{Performance.} The controller must decide well within the 1~s control interval (NFR01). A \prism{} decision took \est{0.4~ms} on average and \est{2.1~ms} at most, and a \vls{} scan took \est{3.2~ms} on average. One simulated hour ran in \est{95~s} of wall-clock time with libsumo, so NFR06 was met with a wide margin (\cref{tab:eval-perf}).
+
+\textit{Scalability.} Timings were repeated at all demand levels. Decision time rose only from \est{0.3~ms} at 300~veh/h/approach to \est{0.5~ms} in the morning scenario, in which up to \est{214} objects were inside the 75~m sensor range; wall-clock time grew roughly linearly with vehicles and stayed below 180~s.
+
+\begin{table}[htbp]
+\centering
+\caption{Computational performance and scalability across demand levels.}
+\label{tab:eval-perf}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Scenario & \shortstack{Max objects\\in range} & \shortstack{\prism{} decision\\mean / max (ms)} & \shortstack{\vls{} scan\\mean (ms)} & \shortstack{Wall clock per\\sim.\ hour (s)} \\
+\midrule
+Mock 300  & \est{68}  & \est{0.3} / \est{1.4} & \est{1.9} & \est{58} \\
+Mock 500  & \est{112} & \est{0.4} / \est{1.8} & \est{2.8} & \est{84} \\
+Mock 700  & \est{171} & \est{0.4} / \est{2.0} & \est{3.6} & \est{109} \\
+Afternoon & \est{126} & \est{0.4} / \est{2.1} & \est{3.2} & \est{95} \\
+Morning   & \est{214} & \est{0.5} / \est{2.1} & \est{4.4} & \est{131} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textit{Robustness.} Graceful degradation under sensor imperfection (NFR03) was tested statistically (TC08), by noise and dropout sweeps (\cref{sec:eval-sensitivity}) and by fault injection (TC06). In the fault-injection run the hourly average waiting time rose only to \est{40.6~s}, still well below the fixed-time value.
+
+\textit{Safety invariant monitoring.} During every system run, assertions checked that no conflicting movements were green together, that every green was followed by the full 5~s intergreen and that no green was shorter than $G_{\min}$. Across \est{370} simulated hours (all controllers, scenarios, seeds and sensitivity runs) \est{zero} violations and \est{zero} \sumo{} collisions were recorded, supporting the safety argument of \cref{sec:impl-prism}.
+
+\subsection{Functional testing}\label{sec:eval-functional}
+
+Functional tests targeted each rule of the decision loop (\cref{alg:prism}) in isolation with hand-constructed states. TC01, the most important, drove the decision function with randomly generated queues, arrivals and red times and asserted that exactly one of the four phases (bypass through, bypass right, cross through, cross right) was green or that the junction was in intergreen. TC02--TC05 verified the timing rules: minimum and maximum green, gap-out, the pressure switch with hysteresis $\theta = 0.25$ and $\varepsilon = 2$~PCU (Passenger Car Unit), and the starvation override at $T_{\text{starve}} = 120$~s.
+
+TC08 verified that the \vls{} error model produced the intended statistics: a Kolmogorov--Smirnov test of position errors against $\mathcal{N}(0, \sigma(r))$ with $\sigma(r) = 0.10 + 0.002r$ gave $p =$ \est{0.62}, and the empirical miss rate at the range limit lay within a binomial 99\% confidence interval around $p_{\text{miss}}(R) = 0.05$. TC09 confirmed that the \dtx{} waiting-time definition ($v < 0.1$~m/s) reproduces \sumo{}'s \texttt{waitingTime}, a prerequisite for \cref{sec:eval-calibration}. All ten cases passed.
+
+% =====================================================================
+\section{Testing and evaluation workflow}\label{sec:eval-workflow}
+
+After verification, evaluation proceeded through the five stages shown in \cref{fig:eval-workflow}. Each stage produced evidence on which the next relied.
+
+\begin{figure}[htbp]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+  stage/.style={draw, thick, rounded corners=2pt, fill=black!6, text width=2.45cm, minimum height=1.25cm, align=center, font=\small},
+  evid/.style={draw, dashed, text width=2.45cm, minimum height=1.1cm, align=center, font=\scriptsize},
+  arr/.style={-{Stealth[length=2.2mm]}, thick}]
+\node[stage] (s1) {1. Mock-data verification};
+\node[stage, right=0.45cm of s1] (s2) {2. \dtx{} accuracy};
+\node[stage, right=0.45cm of s2] (s3) {3. Calibration and validation};
+\node[stage, right=0.45cm of s3] (s4) {4. Controller comparison};
+\node[stage, right=0.45cm of s4] (s5) {5. Sensitivity analysis};
+\foreach \a/\b in {s1/s2,s2/s3,s3/s4,s4/s5} \draw[arr] (\a) -- (\b);
+\node[evid, below=0.6cm of s1] (o1) {Equal demand 300/500/700 veh/h; tuning seeds 1--5};
+\node[evid, below=0.6cm of s2] (o2) {mAP, MOTA, IDF1, reprojection error, demand};
+\node[evid, below=0.6cm of s3] (o3) {GEH $<5$, MAPE of waiting time};
+\node[evid, below=0.6cm of s4] (o4) {B1--B3, \prism{}, \prism{}-GT; seeds 6--15; Wilcoxon};
+\node[evid, below=0.6cm of s5] (o5) {Noise, dropout, $\theta$, $G_{\max}$};
+\foreach \i in {1,...,5} \draw[-{Stealth[length=1.8mm]}] (s\i) -- (o\i);
+\draw[arr, dashed] (s5.north) -- ++(0,0.5) -| node[pos=0.25, above, font=\scriptsize] {parameter feedback (tuning seeds only)} (s1.north);
+\end{tikzpicture}}
+\caption{Testing and evaluation workflow, with the evidence produced at each stage.}
+\label{fig:eval-workflow}
+\end{figure}
+
+\subsection{Mock-data verification}\label{sec:eval-mock}
+
+Before the drone data were processed, the closed loop was exercised on mock demand: equal flow on all four approaches, turning shares of 25\% left, 50\% through and 25\% right, and a fixed composition (\cref{sec:impl-sumo}). It also supplied the parameter grid search on tuning seeds 1--5; \cref{fig:eval-mock} shows held-out results. \prism{} reduced waiting time against the observed 78~s plan at every level: by \est{19.5\%} (\est{24.6}~$\to$~\est{19.8}~s) at 300~veh/h/approach, \est{23.2\%} (\est{41.8}~$\to$~\est{32.1}~s) at 500 and \est{16.7\%} (\est{79.5}~$\to$~\est{66.2}~s) at 700. The gain peaked at medium demand: at low demand there is little to optimise, and at high demand little spare green time to redistribute. It also exposed an early defect: without hysteresis the controller oscillated between phases of nearly equal pressure (\cref{sec:eval-sensitivity}).
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar, bar width=16pt, width=0.8\textwidth, height=6cm,
+  ylabel={Average waiting time (s)}, xlabel={Mock demand (veh/h/approach)},
+  ymin=0, ymax=95, symbolic x coords={300,500,700}, xtick=data,
+  enlarge x limits=0.25, nodes near coords, nodes near coords style={font=\scriptsize},
+  legend style={at={(0.03,0.97)}, anchor=north west, font=\small}, legend cell align=left]
+% PLACEHOLDER DATA (mock demand, Fixed B1)
+\addplot[draw=black, fill=black!20] coordinates {(300,24.6) (500,41.8) (700,79.5)};
+% PLACEHOLDER DATA (mock demand, PRISM)
+\addplot[draw=black, pattern=north east lines] coordinates {(300,19.8) (500,32.1) (700,66.2)};
+\legend{Fixed-time (B1), \prism{}}
+\end{axis}
+\end{tikzpicture}
+\caption{Mock-data verification: average waiting time per vehicle at three demand levels (evaluation seeds).}
+\label{fig:eval-mock}
+\end{figure}
+
+\subsection{\dtx{} accuracy}\label{sec:eval-dtx}
+
+The fine-tuned YOLOv8s detector~\cite{jocher2023yolov8} with Slicing Aided Hyper Inference (SAHI)~\cite{akyon2022sahi} was evaluated on the 15\% test split of the \est{450} annotated frames. It reached a mean Average Precision (mAP) at 0.5 Intersection over Union (IoU) of \est{0.86} and an mAP@0.5:0.95 of \est{0.58} (\cref{tab:eval-det}). Large vehicles were detected almost perfectly; the weakest classes were bicycles, which are rare and very small at \est{$\approx$90~m} altitude, and motorcycles, which overlap one another while filtering between queued vehicles. The motorcycle Average Precision (AP) of \est{0.81} was judged adequate because a track is counted once it has been detected in several frames.
+
+\begin{table}[htbp]
+\centering
+\caption{Per-class detection performance of YOLOv8s with SAHI (test split).}
+\label{tab:eval-det}
+\small
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+& Moto & 3W & Car & Van & Bus & Lorry & Bicycle \\
+\midrule
+AP@0.5 & \est{0.81} & \est{0.88} & \est{0.93} & \est{0.84} & \est{0.95} & \est{0.87} & \est{0.62} \\
+\midrule
+\multicolumn{8}{@{}l}{All classes: mAP@0.5 = \est{0.86}; mAP@0.5:0.95 = \est{0.58}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+ByteTrack~\cite{zhang2022bytetrack} was evaluated on a hand-labelled two-minute clip from the morning session with the Multiple Object Tracking (MOT) metrics of~\cite{bernardin2008clearmot,ristani2016idf1}: Multiple Object Tracking Accuracy (MOTA) was \est{0.82}, the identification F1 score (IDF1) \est{0.79}, with \est{14} identity switches. Georeferencing achieved a Ground Sample Distance (GSD) of \est{$\approx$2.6~cm/px} and a reprojection error of \est{0.18~m} on held-out control points.
+
+\Cref{tab:eval-demand,tab:eval-composition} summarise the extracted demand. The morning session carried \est{3{,}420}~veh/h (\est{3{,}150}~PCU/h) and the afternoon \est{2{,}280}~veh/h (\est{2{,}085}~PCU/h); the bypass carried about \est{70\%} of all traffic in both sessions. Motorcycles and three-wheelers together formed \est{62\%} and \est{61\%} of the two sessions, so treating them as cars, or using loops that miss them, would misrepresent the load. \dtx{} also gave a saturation flow of \est{1850}~PCU/h/lane, a free-flow speed of \est{38}~km/h and observed average waiting times under the existing plan of \est{104.7~s} (morning) and \est{46.3~s} (afternoon).
+
+\begin{table}[htbp]
+\centering
+\caption{Hourly demand and turning shares extracted by \dtx{} (Bypass 1/2 and Cross 1/2 denote the two opposing approaches of each road; turning shares in PCU).}
+\label{tab:eval-demand}
+\small
+\begin{tabular}{@{}llcccccc@{}}
+\toprule
+Session & Approach & veh/h & PCU/h & Left (slip) & Through & Right \\
+\midrule
+\multirow{5}{*}{Morning}
+ & Bypass 1 & \est{1{,}390} & \est{1{,}280} & \est{12\%} & \est{75\%} & \est{13\%} \\
+ & Bypass 2 & \est{1{,}010} & \est{930} & \est{13\%} & \est{73\%} & \est{14\%} \\
+ & Cross 1 & \est{640} & \est{590} & \est{17\%} & \est{58\%} & \est{25\%} \\
+ & Cross 2 & \est{380} & \est{350} & \est{17\%} & \est{60\%} & \est{23\%} \\
+ & \textit{Total} & \est{3{,}420} & \est{3{,}150} & & & \\
+\midrule
+\multirow{5}{*}{Afternoon}
+ & Bypass 1 & \est{853} & \est{780} & \est{12\%} & \est{73\%} & \est{15\%} \\
+ & Bypass 2 & \est{722} & \est{660} & \est{12\%} & \est{73\%} & \est{15\%} \\
+ & Cross 1 & \est{514} & \est{470} & \est{13\%} & \est{64\%} & \est{23\%} \\
+ & Cross 2 & \est{191} & \est{175} & \est{20\%} & \est{57\%} & \est{23\%} \\
+ & \textit{Total} & \est{2{,}280} & \est{2{,}085} & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Vehicle composition extracted by \dtx{} (\% of vehicles).}
+\label{tab:eval-composition}
+\small
+\begin{tabular}{@{}lccccccc@{}}
+\toprule
+Session & Moto & 3W & Car & Van/SUV & Bus & Lorry & Bicycle \\
+\midrule
+Morning (07:00--08:00)   & \est{38} & \est{24} & \est{21} & \est{7} & \est{6} & \est{3} & \est{1} \\
+Afternoon (13:30--14:30) & \est{34} & \est{27} & \est{22} & \est{8} & \est{5} & \est{3} & \est{1} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Calibration and validation}\label{sec:eval-calibration}
+
+The \sumo{} model running the observed 78~s plan (B1) was calibrated against the \dtx{} observations following the Federal Highway Administration microsimulation guidelines~\cite{dowling2004toolbox}. Counts were compared with the GEH statistic,
+\begin{equation}
+\mathrm{GEH} = \sqrt{\frac{2\,(M - C)^2}{M + C}},
+\end{equation}
+where $M$ is the simulated and $C$ the observed hourly count. Unlike a percentage error, GEH tolerates larger relative deviations on small flows, which suits movements of very different sizes. The conventional criterion is GEH $< 5$ for at least 85\% of counts. All eight approach counts (\est{100\%}) and \est{22} of the \est{24} turning movements (\est{91.7\%}) met it (\cref{tab:eval-geh}). The two failures were morning bypass right turns, which the sublane model under-served because through motorcycles blocked the right-turn bay more often than in reality. The parameters tuned were the driver imperfection $\sigma$, reaction time $\tau$, \texttt{minGap}, \texttt{lcSublane} and the speed-factor distribution (final values in \cref{app:params}).
+
+\begin{table}[htbp]
+\centering
+\caption{Calibration: observed and simulated hourly approach volumes (veh/h) with GEH.}
+\label{tab:eval-geh}
+\small
+\begin{tabular}{@{}llcccc@{}}
+\toprule
+Session & Approach & Observed & Simulated & Difference & GEH \\
+\midrule
+\multirow{4}{*}{Morning}
+ & Bypass 1 & \est{1{,}390} & \est{1{,}362} & \est{$-2.0\%$} & \est{0.75} \\
+ & Bypass 2 & \est{1{,}010} & \est{1{,}027} & \est{$+1.7\%$} & \est{0.53} \\
+ & Cross 1 & \est{640} & \est{651} & \est{$+1.7\%$} & \est{0.43} \\
+ & Cross 2 & \est{380} & \est{374} & \est{$-1.6\%$} & \est{0.31} \\
+\midrule
+\multirow{4}{*}{Afternoon}
+ & Bypass 1 & \est{853} & \est{866} & \est{$+1.5\%$} & \est{0.44} \\
+ & Bypass 2 & \est{722} & \est{709} & \est{$-1.8\%$} & \est{0.49} \\
+ & Cross 1 & \est{514} & \est{507} & \est{$-1.4\%$} & \est{0.31} \\
+ & Cross 2 & \est{191} & \est{195} & \est{$+2.1\%$} & \est{0.29} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Validation then used a measure not targeted during count calibration: the average waiting time. The simulated B1 value was \est{108.6~s} (morning) and \est{47.9~s} (afternoon), against observed \est{104.7~s} and \est{46.3~s}. At the finer level of 5-minute bins per approach, the Mean Absolute Percentage Error (MAPE) of average waiting time was \est{8.4\%} in the morning and \est{6.9\%} in the afternoon, within the range usually accepted for heterogeneous-traffic microsimulation~\cite{mathew2010calibration}. This supports using the model as a test bed, although it cannot prove that the model responds to a \emph{different} controller exactly as the real junction would.
+
+\subsection{Controller comparison}\label{sec:eval-results}
+
+\Cref{tab:eval-wait} and \cref{fig:eval-wait} present the primary indicator. \prism{} achieved the lowest waiting time of all deployable controllers in every scenario, reducing it by \est{18.8\%} in the afternoon and \est{11.4\%} in the morning relative to the existing plan, by \est{8.7\%} and \est{7.4\%} relative to the \sumo{} actuated controller~\cite{sumo_actuated}, and by \est{11.6\%} and \est{5.4\%} relative to Webster's plan. In the morning Webster beat the actuated controller, which rarely gaps out at high demand and degenerates into a maximum-green plan. The oracle \prism{}-GT was only \est{1.1~s} and \est{1.7~s} better than \prism{}.
+
+\begin{table}[htbp]
+\centering
+\caption{Average waiting time per vehicle (s), mean $\pm$ standard deviation over 10 evaluation seeds (Mock 500 = 500 veh/h per approach).}
+\label{tab:eval-wait}
+\footnotesize
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+Scenario & Fixed (B1) & Actuated (B2) & Webster (B3) & \prism{} & \prism{}-GT & vs Fixed \\
+\midrule
+Mock 500 & \est{41.8$\pm$1.9} & \est{35.6$\pm$1.7} & \est{37.9$\pm$1.8} & \est{\textbf{32.1}$\pm$1.5} & \est{31.4$\pm$1.4} & \est{$-23.2\%$} \\
+Afternoon (moderate) & \est{47.9$\pm$2.3} & \est{42.6$\pm$2.1} & \est{44.0$\pm$2.2} & \est{\textbf{38.9}$\pm$1.9} & \est{37.8$\pm$1.8} & \est{$-18.8\%$} \\
+Morning (high) & \est{108.6$\pm$5.4} & \est{103.9$\pm$5.9} & \est{101.7$\pm$5.1} & \est{\textbf{96.2}$\pm$4.8} & \est{94.5$\pm$4.6} & \est{$-11.4\%$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar, bar width=11pt, width=\textwidth, height=7cm,
+  ylabel={Average waiting time (s)}, ymin=0, ymax=125,
+  symbolic x coords={Mock 500,Afternoon,Morning}, xtick=data, enlarge x limits=0.2,
+  legend style={at={(0.5,1.03)}, anchor=south, legend columns=5, font=\footnotesize},
+  error bars/y dir=both, error bars/y explicit,
+  error bars/error bar style={thin, black}]
+% PLACEHOLDER DATA (Fixed B1, mean +- sd)
+\addplot[draw=black, fill=white] coordinates {(Mock 500,41.8) +- (0,1.9) (Afternoon,47.9) +- (0,2.3) (Morning,108.6) +- (0,5.4)};
+% PLACEHOLDER DATA (Actuated B2)
+\addplot[draw=black, fill=black!25] coordinates {(Mock 500,35.6) +- (0,1.7) (Afternoon,42.6) +- (0,2.1) (Morning,103.9) +- (0,5.9)};
+% PLACEHOLDER DATA (Webster B3)
+\addplot[draw=black, pattern=crosshatch] coordinates {(Mock 500,37.9) +- (0,1.8) (Afternoon,44.0) +- (0,2.2) (Morning,101.7) +- (0,5.1)};
+% PLACEHOLDER DATA (PRISM)
+\addplot[draw=black, fill=black!70] coordinates {(Mock 500,32.1) +- (0,1.5) (Afternoon,38.9) +- (0,1.9) (Morning,96.2) +- (0,4.8)};
+% PLACEHOLDER DATA (PRISM-GT)
+\addplot[draw=black, pattern=north east lines] coordinates {(Mock 500,31.4) +- (0,1.4) (Afternoon,37.8) +- (0,1.8) (Morning,94.5) +- (0,4.6)};
+\legend{Fixed (B1), Actuated (B2), Webster (B3), \prism{}, \prism{}-GT}
+\end{axis}
+\end{tikzpicture}
+\caption{Average waiting time by controller and scenario; error bars show $\pm 1$ standard deviation over 10 seeds.}
+\label{fig:eval-wait}
+\end{figure}
+
+\Cref{tab:eval-secondary} shows that every secondary indicator improved in both sessions. In the undersaturated afternoon, throughput was bounded by demand (\est{$+0.4\%$}); in the morning, B1 could not discharge all demand within the hour and \prism{} served \est{123} more vehicles per hour. Carbon dioxide (CO$_2$) emissions from the HBEFA model~\cite{hbefa41} fell by \est{5--7\%} through fewer stops and less idling. The 95th-percentile waiting time fell by \est{14.4\%} in the afternoon, so the worst-served vehicles also gained.
+
+\begin{table}[htbp]
+\centering
+\caption{Secondary KPIs: existing fixed-time plan (B1) and \prism{} (mean over 10 seeds).}
+\label{tab:eval-secondary}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcccccc@{}}
+\toprule
+& \multicolumn{3}{c}{Afternoon} & \multicolumn{3}{c}{Morning} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}
+Indicator & Fixed & \prism{} & Change & Fixed & \prism{} & Change \\
+\midrule
+Average travel time (s)     & \est{96.4} & \est{87.1} & \est{$-9.6\%$} & \est{168.2} & \est{155.3} & \est{$-7.7\%$} \\
+Average queue length (m)    & \est{38.5} & \est{31.2} & \est{$-19.0\%$} & \est{92.4} & \est{83.7} & \est{$-9.4\%$} \\
+Maximum queue length (m)    & \est{112} & \est{94} & \est{$-16.1\%$} & \est{268} & \est{241} & \est{$-10.1\%$} \\
+Throughput (veh/h)          & \est{2{,}262} & \est{2{,}271} & \est{$+0.4\%$} & \est{3{,}118} & \est{3{,}241} & \est{$+3.9\%$} \\
+95th-percentile wait (s)    & \est{118} & \est{101} & \est{$-14.4\%$} & \est{246} & \est{228} & \est{$-7.3\%$} \\
+Stops per vehicle           & \est{1.42} & \est{1.21} & \est{$-14.8\%$} & \est{2.86} & \est{2.57} & \est{$-10.1\%$} \\
+CO$_2$ (kg/h, HBEFA4)       & \est{612} & \est{571} & \est{$-6.7\%$} & \est{1{,}104} & \est{1{,}048} & \est{$-5.1\%$} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\Cref{fig:eval-class} breaks the afternoon waiting time down by vehicle class. All classes benefited, by between \est{16.4\%} (lorries) and \est{19.8\%} (buses). Motorcycles waited least under both controllers because sublane filtering brings them to the stop line; heavy vehicles waited longest because they accelerate slowly. Importantly, PCU weighting did not penalise small vehicles: motorcycles still gained \est{19.6\%}.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{axis}[
+  ybar, bar width=13pt, width=0.9\textwidth, height=6cm,
+  ylabel={Average waiting time (s)}, ymin=0, ymax=70,
+  symbolic x coords={Motorcycle,Three-wheeler,Car,Bus,Lorry}, xtick=data,
+  enlarge x limits=0.12, nodes near coords, nodes near coords style={font=\scriptsize},
+  legend style={at={(0.03,0.97)}, anchor=north west, font=\small}, legend cell align=left]
+% PLACEHOLDER DATA (afternoon per-class wait, Fixed B1)
+\addplot[draw=black, fill=black!20] coordinates {(Motorcycle,39.2) (Three-wheeler,46.0) (Car,48.7) (Bus,55.1) (Lorry,57.3)};
+% PLACEHOLDER DATA (afternoon per-class wait, PRISM)
+\addplot[draw=black, pattern=north east lines] coordinates {(Motorcycle,31.5) (Three-wheeler,37.8) (Car,39.6) (Bus,44.2) (Lorry,47.9)};
+\legend{Fixed-time (B1), \prism{}}
+\end{axis}
+\end{tikzpicture}
+\caption{Average waiting time per vehicle class, afternoon scenario.}
+\label{fig:eval-class}
+\end{figure}
+
+Because every controller was run on the same seeds, the per-seed waiting times form paired samples, and the non-parametric Wilcoxon signed-rank test~\cite{wilcoxon1945} was applied; it assumes no normality. With $n = 10$ the smallest attainable two-sided exact $p$-value is 0.002. \prism{} was significantly better than B1 ($p < 0.01$) and B2 ($p < 0.05$) in both real scenarios (\cref{tab:eval-wilcoxon}); the difference from \prism{}-GT was marginal in the afternoon and not significant in the morning.
+
+\begin{table}[htbp]
+\centering
+\caption{Wilcoxon signed-rank tests on paired per-seed average waiting times ($n = 10$, two-sided).}
+\label{tab:eval-wilcoxon}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+& \multicolumn{2}{c}{Afternoon} & \multicolumn{2}{c}{Morning} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Comparison & Seeds favouring \prism{} & $p$ & Seeds favouring \prism{} & $p$ \\
+\midrule
+\prism{} vs Fixed (B1)    & \est{10/10} & \est{0.002} & \est{10/10} & \est{0.002} \\
+\prism{} vs Actuated (B2) & \est{10/10} & \est{0.002} & \est{9/10}  & \est{0.014} \\
+\prism{} vs Webster (B3)  & \est{10/10} & \est{0.002} & \est{9/10}  & \est{0.027} \\
+\prism{} vs \prism{}-GT   & \est{2/10}  & \est{0.049} & \est{3/10}  & \est{0.084} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two indicators address stakeholder needs (\cref{sec:srs-stakeholders}). As a proxy for police manual-control effort, a ``manual-control trigger'' was defined as the share of consecutive 78~s windows in which any approach queue, measured from \sumo{} ground truth, exceeded 200~m. In the morning this share fell from \est{31\%} under B1 to \est{19\%} under \prism{}; in the afternoon it was \est{0\%} under both (\cref{tab:eval-police}). Phase changes per hour show how the controller achieved this: B1 always made \est{$\approx$185} changes (46 cycles of four phases), whereas \prism{} made \est{201} in the afternoon, when queues cleared quickly and gap-out ended phases early, and \est{162} in the morning, when longer greens reduced the share of lost time.
+
+\begin{table}[htbp]
+\centering
+\caption{Stakeholder-oriented indicators: manual-control trigger and phase changes per hour.}
+\label{tab:eval-police}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+& \multicolumn{2}{c}{Afternoon} & \multicolumn{2}{c}{Morning} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}
+Indicator & Fixed & \prism{} & Fixed & \prism{} \\
+\midrule
+Windows with any queue $> 200$~m & \est{0\%} & \est{0\%} & \est{31\%} & \est{19\%} \\
+Phase changes per hour & \est{185} & \est{201} & \est{185} & \est{162} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Sensitivity analysis}\label{sec:eval-sensitivity}
+
+Robustness to sensing was examined by varying the base position-noise term $\sigma_0$ (0.10~m in the reference model) and a uniform dropout probability independently in the afternoon scenario (\cref{fig:eval-sens}). A tenfold increase of noise to $\sigma_0 = 1.0$~m raised waiting time only to \est{42.7~s}, still well below B1 (\est{47.9~s}). Dropout had a stronger effect, because missed detections shrink estimated queues and trigger premature gap-out; nevertheless \prism{} still beat B1 at a dropout of \est{0.3} (\est{44.9~s}), far beyond the 1--5\% of the reference model. The tracker bridges up to three missed scans, and pressure aggregates tens of vehicles, so per-vehicle errors largely cancel.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{groupplot}[group style={group size=2 by 1, horizontal sep=1.6cm},
+  width=0.49\textwidth, height=5.6cm, ymin=34, ymax=50, grid=major, grid style={black!15},
+  ylabel={Avg waiting time (s)}, legend style={font=\scriptsize, at={(0.97,0.03)}, anchor=south east}, legend cell align=left]
+\nextgroupplot[xlabel={Position noise $\sigma_0$ (m)}, xmin=0, xmax=1.05]
+% PLACEHOLDER DATA (PRISM afternoon vs position noise sigma0)
+\addplot[black, thick, mark=*] coordinates {(0,37.8) (0.1,38.9) (0.3,39.4) (0.5,40.3) (1.0,42.7)};
+\addplot[black, thick, dashed, domain=0:1.05, samples=2] {47.9};
+\legend{\prism{}, Fixed (B1)}
+\nextgroupplot[xlabel={Dropout probability}, xmin=0, xmax=0.31]
+% PLACEHOLDER DATA (PRISM afternoon vs dropout)
+\addplot[black, thick, mark=square*] coordinates {(0,37.9) (0.05,38.9) (0.1,39.8) (0.2,41.6) (0.3,44.9)};
+\addplot[black, thick, dashed, domain=0:0.31, samples=2] {47.9};
+\legend{\prism{}, Fixed (B1)}
+\end{groupplot}
+\end{tikzpicture}
+\caption{Sensitivity of \prism{} average waiting time (afternoon) to position noise (left) and detection dropout (right); the dashed line is the fixed-time plan.}
+\label{fig:eval-sens}
+\end{figure}
+
+\Cref{tab:eval-param} and \cref{fig:eval-param} report the sensitivity to the hysteresis $\theta$ and to the through-phase maximum green $G_{\max}$. Without hysteresis ($\theta = 0$) the controller oscillated between phases of similar pressure, producing \est{246} phase changes per hour, each costing 5~s of intergreen, and waiting time rose to \est{40.8~s}. Too much hysteresis ($\theta = 0.5$) made the controller sluggish. $G_{\max}$ showed a similarly shallow optimum at the chosen 50~s. Because the response is flat near the reference values, the results do not depend on fine tuning.
+
+\begin{table}[htbp]
+\centering
+\caption{Parameter sensitivity of \prism{} (afternoon; reference values in bold).}
+\label{tab:eval-param}
+\small
+\begin{tabular}{@{}lcccc@{\hspace{2em}}lcccc@{}}
+\toprule
+$\theta$ & 0 & 0.1 & \textbf{0.25} & 0.5 & $G_{\max}$ (s) & 40 & \textbf{50} & 60 & 75 \\
+\midrule
+Wait (s) & \est{40.8} & \est{39.3} & \est{38.9} & \est{39.7} & Wait (s) & \est{39.6} & \est{38.9} & \est{39.1} & \est{40.0} \\
+Changes/h & \est{246} & \est{219} & \est{201} & \est{174} & & & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}
+\begin{groupplot}[group style={group size=2 by 1, horizontal sep=1.6cm},
+  width=0.49\textwidth, height=5.2cm, ymin=38, ymax=41.5, grid=major, grid style={black!15},
+  ylabel={Avg waiting time (s)}]
+\nextgroupplot[xlabel={Hysteresis $\theta$}, xmin=-0.02, xmax=0.52, xtick={0,0.1,0.25,0.5}]
+% PLACEHOLDER DATA (PRISM afternoon vs theta)
+\addplot[black, thick, mark=triangle*, mark size=3pt] coordinates {(0,40.8) (0.1,39.3) (0.25,38.9) (0.5,39.7)};
+\nextgroupplot[xlabel={Through-phase $G_{\max}$ (s)}, xmin=37, xmax=78, xtick={40,50,60,75}]
+% PLACEHOLDER DATA (PRISM afternoon vs Gmax through)
+\addplot[black, thick, mark=diamond*, mark size=3pt] coordinates {(40,39.6) (50,38.9) (60,39.1) (75,40.0)};
+\end{groupplot}
+\end{tikzpicture}
+\caption{Sensitivity of \prism{} average waiting time (afternoon) to the hysteresis $\theta$ (left) and the through-phase maximum green (right).}
+\label{fig:eval-param}
+\end{figure}
+
+\subsection{Discussion}\label{sec:eval-discussion}
+
+\textit{Gains shrink near saturation.} The relative benefit of \prism{} fell from \est{18.8\%} in the afternoon to \est{11.4\%} in the morning. With 20~s of lost time in a 78~s cycle, only $1 - 20/78 \approx 0.74$ of the cycle is usable, and in the morning the critical bypass movements operated at a degree of saturation above \est{0.9}. Near saturation, delay is dominated by the overflow term of Webster's formula~\cite{webster1958}, which depends on total capacity rather than on how cleverly it is shared. The remaining morning gains came from fewer phase changes and from not serving cleared approaches.
+
+\textit{Why \prism{} beats actuated control.} Unlike the myopic actuated controller, \prism{} has three advantages. First, cross-phase pressure terminates a phase when another phase has accumulated a larger load, not merely when the current one runs dry, the property behind the stability of max-pressure control~\cite{varaiya2013maxpressure}. Second, PCU weighting measures load in discharge-time terms: twelve queued motorcycles need far less green than twelve vehicles that include two buses. Third, the urgency multiplier protects lightly loaded phases such as the cross-road right turn, so fairness and efficiency were achieved together, as the lower 95th-percentile wait confirms.
+
+\textit{Cost of sensing and motorcycle filtering.} The gap between \prism{} and \prism{}-GT, about \est{1~s}, is the price of a realistic LiDAR instead of perfect knowledge. Most residual error came from bus occlusion and from motorcycles filtering to the stop line; dense motorcycle clusters were occasionally merged or split by the size classes, yet the PCU-weighted queue still tracked the true load.
+
+\textit{Answers to the sub-research questions.} For SRQ1, \dtx{} extracted demand, composition, turning shares, saturation flow and waiting time with \est{0.86} mAP@0.5 and \est{0.82} MOTA, and the resulting model met GEH and MAPE criteria. For SRQ2, a PCU-weighted pressure law with an urgency term and hysteresis handled heterogeneity, fairness and noisy sensing while passing every safety test. For SRQ3, \prism{} reduced waiting time by \est{11.4--18.8\%} against B1 and by \est{7.4--8.7\%} against B2, significantly, and degraded gracefully under noise, dropout and parameter changes.
+
+\textit{Threats to validity.}\label{sec:eval-threats} The LiDAR was simulated with a statistical error model, not a physical point cloud, so failure modes such as rain backscatter were not represented. Only two one-hour sessions on a single weekday were available after the evening session was lost to weather, so the results may not generalise to other days or seasons. A single junction was studied, so coordination effects were not captured. Finally, several model and controller parameters were taken from the literature or tuned on only five seeds, so other values might perform better at other junctions.
+
+% =====================================================================
+\section{Review of test strategies used}\label{sec:eval-review}
+
+The layered strategy proved its value. Hand-derived oracles caught boundary-comparison errors in the pressure-switch rule early, and the randomised TC01 gave far stronger evidence than scripted sequences. Testing the \vls{} statistically rather than against fixed values was essential, because the sensor is stochastic by design. The mock-data stage allowed development while flight permissions were pending. Separating tuning seeds 1--5 from evaluation seeds 6--15 guarded against over-fitting.
+
+The strategy also had clear limits. No field test was possible, so all controller evidence is simulation-based. Tracking accuracy was measured on a single hand-labelled two-minute clip. The detector test split contained only about seventy frames, and the same two sessions served both calibration and validation, so no independent day was available for validation. No hardware-in-the-loop test with a real signal cabinet was performed, and stakeholder acceptance was gauged only through discussion rather than a formal usability study. These limitations do not invalidate the comparative findings, which use the same model for every controller, but a real pilot would need to address them.
+
+% =====================================================================
+\section{Chapter summary}
+
+This chapter verified the system through \est{62} unit tests, ten principal and twenty supplementary test cases, closed-loop safety monitoring over \est{370} simulated hours and fault injection. Mock-data verification showed reductions of \est{16.7--23.2\%} in waiting time. \dtx{} reached \est{0.86} mAP@0.5 and \est{0.82} MOTA, and the calibrated model met GEH and MAPE criteria. On the drone-calibrated scenarios \prism{} reduced average waiting time by \est{18.8\%} and \est{11.4\%} against the existing plan, outperformed actuated and Webster control with statistical significance, reduced the morning manual-control trigger from \est{31\%} to \est{19\%}, and remained robust to substantial sensor degradation. \Cref{ch:conc} uses these results to assess the objectives.

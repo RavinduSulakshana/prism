@@ -1,0 +1,83 @@
+\chapter{Drone Survey Log}\label{app:drone}
+
+% ==================================================================
+% Appendix F — Drone survey log (writer W3)
+% ==================================================================
+
+This appendix records the drone survey of the Maviththara junction carried out on Friday, 2~October~2026, the approvals under which it was flown and the parameters used to process the footage with \dtx{}. The aircraft was flown by a CAASL-registered operator. Values marked in yellow are to be confirmed against the flight logs and video metadata.
+
+\begin{table}[htbp]
+\centering
+\caption{Flight log for 2~October~2026.}
+\label{tab:drone-flightlog}
+\small
+\setstretch{1.0}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Item} & \textbf{Session M (morning peak)} & \textbf{Session A (afternoon)} & \textbf{Session E (evening peak)}\\
+\midrule
+Planned window & 07:00--08:00 & 13:30--14:30 & 17:00--18:00\\
+Traffic condition & High congestion & Moderate & ---\\
+Actual recording & \est{07:01--07:59} & \est{13:31--14:29} & Not recorded\\
+Usable footage & \est{55~min} & \est{56~min} & ---\\
+Altitude & \est{$\approx$90~m} AGL & \est{$\approx$90~m} AGL & ---\\
+Aircraft & DJI Mini 2 & DJI Mini 2 & ---\\
+Camera & 4K (3840$\times$2160), 30~fps, nadir, stationary hover & 4K (3840$\times$2160), 30~fps, nadir, stationary hover & ---\\
+Video segments & \est{3} & \est{3} & ---\\
+Battery swaps & \est{2} (each gap \est{under 90~s}) & \est{2} (each gap \est{under 90~s}) & ---\\
+Weather & \est{Dry, overcast} & \est{Dry, partly cloudy} & Rain and poor visibility\\
+Notes & Queues on the bypass extended beyond the frame at times; take-off point kept fixed between segments & Demand below capacity; queues cleared in most cycles & Session cancelled because of bad weather; listed as a limitation and future work\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Summary of approvals for the drone survey.}
+\label{tab:drone-approvals}
+\small
+\setstretch{1.0}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{1.8cm}>{\raggedright\arraybackslash}p{3.4cm}>{\raggedright\arraybackslash}p{3.1cm}>{\raggedright\arraybackslash}X@{}}
+\toprule
+\textbf{Date} & \textbf{Authority} & \textbf{Reference} & \textbf{Purpose and conditions}\\
+\midrule
+12.06.2026 & NSBM Green University to Officer in Charge, Piliyandala Police Station & University request letter & Permission to study key intersections in Piliyandala and Kesbewa (scope later narrowed to Maviththara)\\
+\addlinespace
+17.09.2026 & Piliyandala Traffic Police and RDA & Discussion (no reference) & Support for the research; needs: less manual traffic control, less waiting for all road users\\
+\addlinespace
+22.09.2026 & Piliyandala Police Station to Director General, CAASL & PLI/AD/OUT/\ldots/\allowbreak 2026 & Supports drone use at the Maviththara signal on 02.10.2026, windows 07:00--08:00, 13:30--14:30 and 17:00--18:00\\
+\addlinespace
+25.09.2026 & Ministry of Defence & MOD/MLO/\allowbreak DRONE/03/\allowbreak 2026 (7969) & Security clearance for educational purpose; 02.10.2026, 06:00--18:00; maximum 400~ft AGL; visual line of sight; inform the Sri Lanka Air Force and police\\
+\addlinespace
+01.10.2026 & Civil Aviation Authority of Sri Lanka & OP/36/2 & Flight approval under SLCAIS 053 Rev.03\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{\dtx{} processing parameters for the survey footage.}
+\label{tab:drone-processing}
+\small
+\setstretch{1.0}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{4.6cm}X@{}}
+\toprule
+\textbf{Parameter} & \textbf{Value}\\
+\midrule
+Source resolution and frame rate & 3840$\times$2160 at 30~fps\\
+Processing frame rate & 10~fps (every third frame)\\
+Clip lengths, Session M & \est{19~min~40~s}, \est{18~min~50~s}, \est{16~min~30~s}\\
+Clip lengths, Session A & \est{19~min~45~s}, \est{19~min~10~s}, \est{17~min~05~s}\\
+Frames processed & \est{$\approx$33{,}000} (M), \est{$\approx$33{,}600} (A)\\
+Stabilisation & ORB features + RANSAC homography to one reference frame per session\\
+Detector & YOLOv8s (VisDrone2019-DET pre-trained, fine-tuned on \est{450} frames), SAHI 2$\times$2 tiles, overlap 0.2\\
+Tracker & ByteTrack (track threshold 0.5, match threshold 0.8, buffer 30 frames)\\
+Ground sample distance & \est{$\approx$2.6~cm/px}\\
+Smoothing & Savitzky--Golay, window 11, order 2\\
+Waiting threshold & speed $<$ 0.1~m/s inside an approach zone\\
+Segment boundaries & Tracks cut by segment start/end treated as censored (counted in flows, excluded from averages)\\
+Data retained & Anonymous trajectories (track ID, class, time, position, speed) and 5-min aggregated flows only\\
+Raw video & Held offline on an encrypted drive; deleted after processing and examination (policy)\\
+\bottomrule
+\end{tabularx}
+\end{table}

@@ -1,0 +1,48 @@
+\chapter{Additional Test Cases}\label{app:tests}
+
+This appendix lists the supplementary test cases TC11--TC33, which complement the ten principal cases of \cref{tab:eval-tc} in \cref{ch:eval}. Together they cover every functional and non-functional requirement that is in scope (FR01--FR18, NFR01--NFR09). Columns are as in \cref{tab:eval-tc}; all measured values are from the final versions of the components. TC31--TC33 were added during the revision of the control law, and TC22 and TC23 were strengthened: as \cref{sec:eval-review} explains, their original forms verified that each component did what it had been told rather than that it had been told the right thing, and both passed while the defects they should have caught were present. Where a figure before the corresponding fix is known, it is given in parentheses.
+
+{\scriptsize
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{3pt}
+\begin{longtable}{@{}l>{\raggedright\arraybackslash}p{2.4cm}>{\raggedright\arraybackslash}p{1.15cm}>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{3.0cm}>{\raggedright\arraybackslash}p{2.6cm}c@{}}
+\caption{Additional test cases (TC11--TC33).}\label{tab:app-tests}\\
+\toprule
+ID & Description & FR/NFR & Input & Expected & Actual & Status \\
+\midrule
+\endfirsthead
+\caption[]{Additional test cases (continued).}\\
+\toprule
+ID & Description & FR/NFR & Input & Expected & Actual & Status \\
+\midrule
+\endhead
+\midrule
+\multicolumn{7}{r@{}}{\textit{Continued on next page}}\\
+\endfoot
+\bottomrule
+\endlastfoot
+TC11 & Video stabilisation (ORB + RANSAC) & FR01 & 60~s of morning footage with hover drift & Residual drift of fixed road markings $< 2$~px & Mean residual \est{0.9~px}, max \est{1.7~px} & Pass \\
+TC12 & Detection of seven classes & FR02 & Test split of annotated frames & mAP@0.5 $\ge 0.75$; every class detected & mAP@0.5 \est{0.86}; lowest class AP \est{0.62} (bicycle) & Pass \\
+TC13 & Persistent track IDs and class majority vote & FR03 & Hand-labelled two-minute clip & MOTA $\ge 0.75$; one class per track & MOTA \est{0.82}, IDF1 \est{0.79}, \est{14} ID switches & Pass \\
+TC14 & Georeferencing (pixel to metre) & FR04 & Held-out ground control points & Reprojection error $< 0.25$~m & \est{0.18~m}; GSD \est{2.6~cm/px} & Pass \\
+TC15 & Control delay and censored tracks & FR05, FR06 & Synthetic tracks: free-flow pass, 20~s stop, track cut at video end & $d = T_{\text{frame}} - L_{\text{path}}/v_{\text{free}}$; censored track counted in flow, excluded from averages & Delay within \est{0.1~s} of analytical value; censoring correct & Pass \\
+TC16 & Saturation flow from discharge headways & FR06 & Synthetic queue with 1.95~s headways from the 4th vehicle & $\approx 1846$ PCU/h/lane & \est{1846} PCU/h/lane & Pass \\
+TC17 & Route-file export validity & FR06 & Exported morning and afternoon \texttt{.rou.xml} & Loads in \sumo{} without errors; 5-min flows sum to hourly counts & \est{0} errors; sums match exactly & Pass \\
+TC18 & Network structure & FR07 & \texttt{maviththara\allowbreak .net.xml} & 2+2 lanes per arm; slip lanes as yield links; 4-phase programme with 3~s amber + 2~s all-red & All checks passed in \texttt{netedit} and by script & Pass \\
+TC19 & \vls{} occlusion & FR08 & Car behind bus on same bearing; car behind motorcycle; 40\% bus overlap & Hidden; visible; visible & As expected in all three cases & Pass \\
+TC20 & Size class and PCU mapping & FR08 & Lengths 3.1, 3.3, 5.9, 6.1~m & 0.6, 1.0, 1.0, 2.8 PCU & As expected & Pass \\
+TC21 & \vls{} clutter rate & FR08 & $10^5$ empty scans & Poisson mean $\lambda = 0.2$ false objects/scan & Mean \est{0.199}; dispersion test $p =$ \est{0.48} & Pass \\
+TC22 & Two-point track initiation, coasting and deletion & FR09 & Object at 0, 5, 10 and 15~m/s detected twice; then missed 2, 3 scans & Second detection associated within the 20~m initiation gate and velocity set from it; confirmed at 2 hits at every speed; coasting track withheld from the object list; deleted after 3 misses & Confirmed in \est{4/4} speeds (\est{1/4} before the fix); coasting tracks withheld; deletion correct & Pass \\
+TC23 & Map-matching to approach and lane & FR09 & One simulated hour, \sumo{} ground-truth vehicles vs the controller's view of each approach & $\ge 95\%$ of \emph{actual} stopped vehicles within range reported on the right approach, including those on the intermediate-node internal lane & \est{97.9\%} correct (\est{27--31\%} on B1/X1 before the connector fix) & Pass \\
+TC24 & Fail-safe entry and recovery & FR13, NFR03 & \vls{} output removed, then restored, during a one-hour run & Green held for 1--4 missing scans; hand-over at the 5th through amber and all-red, B1 starting at $\phi_1$; adaptive control resumes only at the start of a B1 $\phi_1$ after 10 good scans; no unsafe state & Entry and recovery as specified on all 10 seeds; \est{0} violations & Pass \\
+TC25 & Baseline controllers and ablation & FR15 & B1, B2, B3, \prism{} thesis law and \prism{}-GT, one hour each & B1 reproduces 21/8/15/14~s greens in a 78~s cycle; B2 respects 10/5 and 50/25~s limits; B3 uses the per-scenario Webster plan; the thesis law differs from \prism{}-R by parameters only & Timings match the plans exactly; ablation reproduced the first-evaluation results bit-for-bit & Pass \\
+TC31 & Resting rules & FR10, FR11 & Empty junction; then demand on the running phase only & Rest in all-red, first detected vehicle served after the clearance interval alone; green held rather than surrendered & As expected in both cases & Pass \\
+TC32 & Cyclic selection with skip & FR10, FR12 & Heavy $\phi_1$/$\phi_3$ demand with intermittent right-turn demand & Right-turn phases served in the order $\phi_1\!\to\!\phi_4$ whenever they have demand, skipped when empty; no reliance on the starvation override & Right turns served every cycle in which they had demand; longest right-turn red \est{74~s} & Pass \\
+TC33 & Hidden queue at the range edge & FR09, FR10 & Queue of \est{180~m} built on B1, far beyond the observable range & Hidden queue accumulates at the learnt rate, is capped at 60~PCU, and clears when all objects are within 30~m & Estimated queue within \est{12\%} of ground truth; cleared correctly & Pass \\
+TC26 & Seed reproducibility & NFR05, FR16 & Same scenario and seed run twice from a clean checkout & Identical KPI files & Bit-identical outputs & Pass \\
+TC27 & Batch experiments and statistics & FR16, FR17 & Full experiment grid, then \texttt{stats.py} & One KPI row per run; Wilcoxon $p$ equals independent SciPy computation; plots generated & \est{150} rows; $p$-values identical & Pass \\
+TC28 & Decision logging and GUI overlay & NFR04, FR18 & Afternoon run in \sumo{}-GUI & Every decision logged with rule fired and all $S_\phi$; phase and reason shown in GUI & \est{100\%} of \est{3{,}600} decisions logged with reason & Pass \\
+TC29 & Privacy check & NFR07 & All stored outputs of \dtx{} and experiments & No images, faces or number plates stored; only anonymous IDs and trajectories & No personal data found & Pass \\
+TC30 & Portability and maintainability & NFR08, NFR09 & Static import check; \texttt{pytest-cov} & Controller imports no \sumo{}/TraCI module; coverage $\ge 80\%$ & \est{0} \sumo{} imports; coverage \est{87\%} & Pass \\
+\end{longtable}
+}
